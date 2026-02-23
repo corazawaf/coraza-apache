@@ -38,22 +38,25 @@ docker run --rm coraza-apache-test
 
 ## Configuration example
 
+All standard modsecurity `Sec*` directives are registered natively, so existing
+modsecurity configs (including CRS) can be used directly via Apache's `Include`:
+
 ```apache
 LoadModule coraza_module modules/mod_coraza.so
 
 Coraza On
-CorazaRules "SecRuleEngine On"
-CorazaRules "SecRequestBodyAccess On"
-CorazaRules "SecResponseBodyAccess Off"
+SecRuleEngine On
+SecRequestBodyAccess On
+SecResponseBodyAccess Off
 
-# OWASP CRS
-CorazaRulesFile /etc/coraza/crs-setup.conf
-CorazaRulesFile /etc/coraza/rules/*.conf
+# OWASP CRS — use CorazaRulesFile so that relative data file paths
+# (e.g. @pmFromFile scanners-user-agents.data) resolve correctly
+CorazaRulesFile /etc/coraza/coraza-waf.conf
 
 # Custom exclusions for a specific path
 <Location /api/upload>
-    CorazaRules "SecRuleRemoveById 920420"
-    CorazaRules "SecRequestBodyLimit 52428800"
+    SecRuleRemoveById 920420
+    SecRequestBodyLimit 52428800
 </Location>
 
 # Disable inspection entirely for health checks
@@ -64,11 +67,16 @@ CorazaRulesFile /etc/coraza/rules/*.conf
 
 ### Directives
 
+**Sec\*** -- all standard modsecurity directives (`SecRuleEngine`, `SecRule`,
+`SecAction`, `SecRequestBodyAccess`, `SecAuditEngine`, etc.) are registered
+natively and can be used directly in Apache config files. Context: server config, `<Location>`.
+
 **Coraza** On|Off -- enable or disable the module. Context: server config, `<Location>`.
 
 **CorazaRules** "..." -- inline rule or directive. Context: server config, `<Location>`.
 
-**CorazaRulesFile** /path -- load rules from file. Context: server config, `<Location>`.
+**CorazaRulesFile** /path -- load rules from file. Use this for CRS and other rule
+files that reference relative data file paths. Context: server config, `<Location>`.
 
 **CorazaTransactionId** "..." -- custom transaction ID. Context: server config, `<Location>`.
 

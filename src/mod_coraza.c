@@ -25,6 +25,7 @@ static const char *cmd_coraza_enable(cmd_parms *cmd, void *dcfg, int flag);
 static const char *cmd_coraza_rules(cmd_parms *cmd, void *dcfg, const char *arg);
 static const char *cmd_coraza_rules_file(cmd_parms *cmd, void *dcfg, const char *arg);
 static const char *cmd_coraza_transaction_id(cmd_parms *cmd, void *dcfg, const char *arg);
+static const char *cmd_sec_directive(cmd_parms *cmd, void *dcfg, const char *args);
 
 /*
  * Module-level tracking of all merged dir_confs.
@@ -220,9 +221,37 @@ cmd_coraza_transaction_id(cmd_parms *cmd, void *dcfg, const char *arg)
 }
 
 
+/*
+ * Generic handler for native Sec* directives.
+ * AP_INIT_RAW_ARGS passes the raw text after the directive name.
+ * We reconstruct the full line (e.g. "SecRuleEngine On") and store it
+ * as an inline rule — coraza_rules_add() already parses all Sec* directives.
+ */
+static const char *
+cmd_sec_directive(cmd_parms *cmd, void *dcfg, const char *args)
+{
+    const char *full;
+
+    /* Reconstruct: "SecRuleEngine On" from name="SecRuleEngine", args="On" */
+    full = apr_pstrcat(cmd->pool, cmd->cmd->name, " ", args, NULL);
+
+    /* Same logic as cmd_coraza_rules */
+    return cmd_coraza_rules(cmd, dcfg, full);
+}
+
+
 /* ------------------------------------------------------------------ */
 /* Directives                                                          */
 /* ------------------------------------------------------------------ */
+
+/*
+ * Macro: register a native Sec* directive.
+ * All use AP_INIT_RAW_ARGS so the raw text is passed through unchanged.
+ */
+#define SEC_DIRECTIVE(name) \
+    AP_INIT_RAW_ARGS(name, cmd_sec_directive, NULL, \
+                     RSRC_CONF | ACCESS_CONF, \
+                     "Native modsecurity directive (handled by Coraza)")
 
 static const command_rec coraza_directives[] = {
     AP_INIT_FLAG("Coraza", cmd_coraza_enable, NULL,
@@ -237,6 +266,72 @@ static const command_rec coraza_directives[] = {
     AP_INIT_TAKE1("CorazaTransactionId", cmd_coraza_transaction_id, NULL,
                   RSRC_CONF | ACCESS_CONF,
                   "Custom transaction ID"),
+
+    /* Native Sec* directives — all handled by cmd_sec_directive */
+    SEC_DIRECTIVE("SecRuleEngine"),
+    SEC_DIRECTIVE("SecRule"),
+    SEC_DIRECTIVE("SecAction"),
+    SEC_DIRECTIVE("SecMarker"),
+    SEC_DIRECTIVE("SecDefaultAction"),
+    SEC_DIRECTIVE("SecRequestBodyAccess"),
+    SEC_DIRECTIVE("SecRequestBodyLimit"),
+    SEC_DIRECTIVE("SecRequestBodyNoFilesLimit"),
+    SEC_DIRECTIVE("SecRequestBodyInMemoryLimit"),
+    SEC_DIRECTIVE("SecRequestBodyLimitAction"),
+    SEC_DIRECTIVE("SecResponseBodyAccess"),
+    SEC_DIRECTIVE("SecResponseBodyMimeType"),
+    SEC_DIRECTIVE("SecResponseBodyLimit"),
+    SEC_DIRECTIVE("SecResponseBodyLimitAction"),
+    SEC_DIRECTIVE("SecTmpDir"),
+    SEC_DIRECTIVE("SecDataDir"),
+    SEC_DIRECTIVE("SecAuditEngine"),
+    SEC_DIRECTIVE("SecAuditLog"),
+    SEC_DIRECTIVE("SecAuditLogParts"),
+    SEC_DIRECTIVE("SecAuditLogRelevantStatus"),
+    SEC_DIRECTIVE("SecAuditLogType"),
+    SEC_DIRECTIVE("SecAuditLogStorageDir"),
+    SEC_DIRECTIVE("SecArgumentSeparator"),
+    SEC_DIRECTIVE("SecCookieFormat"),
+    SEC_DIRECTIVE("SecUnicodeMapFile"),
+    SEC_DIRECTIVE("SecStatusEngine"),
+    SEC_DIRECTIVE("SecPcreMatchLimit"),
+    SEC_DIRECTIVE("SecPcreMatchLimitRecursion"),
+    SEC_DIRECTIVE("SecDebugLog"),
+    SEC_DIRECTIVE("SecDebugLogLevel"),
+    SEC_DIRECTIVE("SecRuleRemoveById"),
+    SEC_DIRECTIVE("SecRuleRemoveByTag"),
+    SEC_DIRECTIVE("SecRuleRemoveByMsg"),
+    SEC_DIRECTIVE("SecRuleUpdateActionById"),
+    SEC_DIRECTIVE("SecRuleUpdateTargetById"),
+    SEC_DIRECTIVE("SecRuleUpdateTargetByTag"),
+    SEC_DIRECTIVE("SecRuleUpdateTargetByMsg"),
+    SEC_DIRECTIVE("SecComponentSignature"),
+    SEC_DIRECTIVE("SecWebAppId"),
+    SEC_DIRECTIVE("SecCollectionTimeout"),
+    SEC_DIRECTIVE("SecContentInjection"),
+    SEC_DIRECTIVE("SecConnEngine"),
+    SEC_DIRECTIVE("SecSensorId"),
+    SEC_DIRECTIVE("SecHashEngine"),
+    SEC_DIRECTIVE("SecHashKey"),
+    SEC_DIRECTIVE("SecHashParam"),
+    SEC_DIRECTIVE("SecHashMethodRx"),
+    SEC_DIRECTIVE("SecHashMethodPm"),
+    SEC_DIRECTIVE("SecStreamInBodyInspection"),
+    SEC_DIRECTIVE("SecStreamOutBodyInspection"),
+    SEC_DIRECTIVE("SecUploadDir"),
+    SEC_DIRECTIVE("SecUploadKeepFiles"),
+    SEC_DIRECTIVE("SecUploadFileMode"),
+    SEC_DIRECTIVE("SecUploadFileLimit"),
+    SEC_DIRECTIVE("SecRemoteRules"),
+    SEC_DIRECTIVE("SecRemoteRulesFailAction"),
+    SEC_DIRECTIVE("SecInterceptOnError"),
+    SEC_DIRECTIVE("SecDisableBackendCompression"),
+    SEC_DIRECTIVE("SecHttpBlKey"),
+    SEC_DIRECTIVE("SecGsbLookupDb"),
+    SEC_DIRECTIVE("SecXmlExternalEntity"),
+    SEC_DIRECTIVE("SecRuleScript"),
+    SEC_DIRECTIVE("SecTmpSaveUploadedFiles"),
+
     { NULL }
 };
 
