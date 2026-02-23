@@ -14,7 +14,7 @@ Requires the same forks until the patches are merged upstream:
 
 Requires libcoraza headers at compile time and the shared library at runtime.
 The module is not linked against libcoraza -- it loads it via dlopen()
-after fork to avoid Go runtime deadlocks (same approach as coraza-nginx).
+after fork to avoid Go runtime deadlocks.
 
 ```
 make
