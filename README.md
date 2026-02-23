@@ -29,11 +29,13 @@ make APXS=/path/to/apxs
 
 ## Docker
 
-Builds everything from source (libcoraza + module) and runs basic tests:
+Builds everything from source (libcoraza + module):
 
 ```
 docker build --no-cache -t coraza-apache-test .
-docker run --rm coraza-apache-test
+docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
+./test.sh http://localhost:8888
+docker stop coraza-apache-test
 ```
 
 ## Configuration example

@@ -92,9 +92,6 @@ RUN { \
 # Verify config
 RUN httpd -t 2>&1 && echo "Config syntax OK"
 
-# Copy test scripts
-COPY t/test.sh /tmp/test.sh
-COPY t/run_tests.sh /tmp/run_tests.sh
-RUN chmod +x /tmp/test.sh /tmp/run_tests.sh
+EXPOSE 80
 
-CMD ["sh", "-c", "httpd -k start && sleep 2 && /tmp/test.sh"]
+CMD ["httpd-foreground"]
