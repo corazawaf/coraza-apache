@@ -143,6 +143,24 @@ clear_debug_logs() {
     docker exec "$CONTAINER" sh -c 'rm -f /var/log/coraza/debug/*.log' 2>/dev/null
 }
 
+check_perloc_audit_log() {
+    desc="$1"
+    file="$2"
+    pattern="$3"
+
+    if docker exec "$CONTAINER" grep -q "$pattern" "$file" 2>/dev/null; then
+        printf "  PASS  %s\n" "$desc"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s (pattern '%s' not in %s)\n" "$desc" "$pattern" "$file"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+clear_perloc_audit_logs() {
+    docker exec "$CONTAINER" sh -c 'rm -f /var/log/coraza/audit/*.log' 2>/dev/null
+}
+
 echo "Coraza WAF test suite"
 echo "Target: $URL"
 
@@ -346,10 +364,33 @@ if [ -n "$CONTAINER" ]; then
     check_debug_log "DebugLog: sub1.log written" "/var/log/coraza/debug/sub1.log" "30002"
     check_debug_log "DebugLog: sub2.log written" "/var/log/coraza/debug/sub2.log" "30003"
     echo ""
+
+    echo "--- Per-location audit log isolation tests ---"
+    clear_perloc_audit_logs
+    curl -s -o /dev/null "$URL/auditlog-root?what=root"
+    curl -s -o /dev/null "$URL/auditlog-sub1?what=sub1"
+    curl -s -o /dev/null "$URL/auditlog-sub1/sub2?what=sub2"
+    curl -s -o /dev/null "$URL/auditlog-sub1/sub2?what=sub1"
+    curl -s -o /dev/null "$URL/auditlog-sub3?what=sub3"
+    curl -s -o /dev/null "$URL/auditlog-sub3/sub4?what=sub4"
+    curl -s -o /dev/null "$URL/auditlog-sub3/sub4?what=sub3"
+    curl -s -o /dev/null "$URL/auditlog-sub3/sub4?what=sub4withE"
+    sleep 1
+    check_perloc_audit_log "AuditLog: root.log has root req"        "/var/log/coraza/audit/root.log" "what=root"
+    check_perloc_audit_log "AuditLog: sub1.log has sub1 req"        "/var/log/coraza/audit/sub1.log" "what=sub1"
+    check_perloc_audit_log "AuditLog: sub2.log has sub2 req"        "/var/log/coraza/audit/sub2.log" "what=sub2"
+    check_perloc_audit_log "AuditLog: sub2.log has inherited sub1"  "/var/log/coraza/audit/sub2.log" "what=sub1"
+    check_perloc_audit_log "AuditLog: sub3.log has sub3 req"        "/var/log/coraza/audit/sub3.log" "what=sub3"
+    check_perloc_audit_log "AuditLog: sub4.log has sub4 req"        "/var/log/coraza/audit/sub4.log" "what=sub4"
+    check_perloc_audit_log "AuditLog: sub4.log has inherited sub3"  "/var/log/coraza/audit/sub4.log" "what=sub3"
+    check_perloc_audit_log "AuditLog: sub4.log has sub4withE req"   "/var/log/coraza/audit/sub4.log" "what=sub4withE"
+    check_perloc_audit_log "AuditLog: sub4.log has E section"       "/var/log/coraza/audit/sub4.log" "\-E\-\-"
+    echo ""
 else
     echo "--- Audit log tests (skipped: use --container=NAME) ---"
     echo "--- Transaction ID audit log tests (skipped: use --container=NAME) ---"
     echo "--- Debug log per-location isolation tests (skipped: use --container=NAME) ---"
+    echo "--- Per-location audit log isolation tests (skipped: use --container=NAME) ---"
     echo ""
 fi
 

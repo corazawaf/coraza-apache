@@ -87,6 +87,8 @@ RUN mkdir -p /var/log/coraza && \
     chmod 666 /var/log/coraza/audit.log && \
     mkdir -p /var/log/coraza/debug && \
     chmod 777 /var/log/coraza/debug && \
+    mkdir -p /var/log/coraza/audit && \
+    chmod 777 /var/log/coraza/audit && \
     echo "OK" > /usr/local/apache2/htdocs/index.html && \
     echo "CORAZA_CUSTOM_ERROR_PAGE" > /usr/local/apache2/htdocs/custom-error.html && \
     # Test directories for <Directory> and .htaccess tests
@@ -206,6 +208,44 @@ RUN { \
     echo '    SecDebugLog /var/log/coraza/debug/sub2.log'; \
     echo '    SecDebugLogLevel 9'; \
     echo '    SecRule ARGS:what "@streq sub2" "id:30003,phase:1,pass,log"'; \
+    echo '</Location>'; \
+    echo '# --- Per-location audit log isolation ---'; \
+    echo '<Location "/auditlog-root">'; \
+    echo '    SecAuditEngine On'; \
+    echo '    SecAuditLogParts ABHZ'; \
+    echo '    SecAuditLogType Serial'; \
+    echo '    SecAuditLog /var/log/coraza/audit/root.log'; \
+    echo '    SecRule ARGS:what "@streq root" "id:31001,phase:1,pass,log"'; \
+    echo '</Location>'; \
+    echo '<Location "/auditlog-sub1">'; \
+    echo '    SecAuditEngine On'; \
+    echo '    SecAuditLogParts ABHZ'; \
+    echo '    SecAuditLogType Serial'; \
+    echo '    SecAuditLog /var/log/coraza/audit/sub1.log'; \
+    echo '    SecRule ARGS:what "@streq sub1" "id:31002,phase:1,pass,log"'; \
+    echo '</Location>'; \
+    echo '<Location "/auditlog-sub1/sub2">'; \
+    echo '    SecAuditEngine On'; \
+    echo '    SecAuditLogParts ABHZ'; \
+    echo '    SecAuditLogType Serial'; \
+    echo '    SecAuditLog /var/log/coraza/audit/sub2.log'; \
+    echo '    SecRule ARGS:what "@streq sub2" "id:31003,phase:1,pass,log"'; \
+    echo '</Location>'; \
+    echo '<Location "/auditlog-sub3">'; \
+    echo '    SecAuditEngine On'; \
+    echo '    SecAuditLogParts ABHZ'; \
+    echo '    SecAuditLogType Serial'; \
+    echo '    SecAuditLog /var/log/coraza/audit/sub3.log'; \
+    echo '    SecRule ARGS:what "@streq sub3" "id:31004,phase:1,pass,log"'; \
+    echo '</Location>'; \
+    echo '<Location "/auditlog-sub3/sub4">'; \
+    echo '    SecAuditEngine On'; \
+    echo '    SecAuditLogParts ABHZ'; \
+    echo '    SecAuditLogType Serial'; \
+    echo '    SecResponseBodyAccess On'; \
+    echo '    SecAuditLog /var/log/coraza/audit/sub4.log'; \
+    echo '    SecRule ARGS:what "@streq sub4" "id:31005,phase:1,pass,log"'; \
+    echo '    SecRule ARGS:what "@streq sub4withE" "id:31006,phase:1,pass,log,ctl:auditLogParts=+E"'; \
     echo '</Location>'; \
     echo '# --- Transaction ID ---'; \
     echo '<Location "/txid-test">'; \
