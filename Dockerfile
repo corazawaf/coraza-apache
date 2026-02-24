@@ -127,6 +127,49 @@ RUN { \
     echo '<Directory "/usr/local/apache2/htdocs/dir-disabled">'; \
     echo '    Coraza Off'; \
     echo '</Directory>'; \
+    echo '# --- Per-phase testing ---'; \
+    echo '<Location "/phase1">'; \
+    echo '    SecRule ARGS:action "@streq block403" "id:20001,phase:1,deny,status:403,log"'; \
+    echo '</Location>'; \
+    echo '<Location "/phase2">'; \
+    echo '    SecRule REQUEST_BODY "@contains PHASE2ATTACK" "id:20002,phase:2,deny,status:403,log"'; \
+    echo '</Location>'; \
+    echo '# --- Config merging ---'; \
+    echo '<Location "/merge-engine-off">'; \
+    echo '    SecRuleEngine Off'; \
+    echo '</Location>'; \
+    echo '<Location "/merge-bodyaccess-off">'; \
+    echo '    SecRequestBodyAccess Off'; \
+    echo '</Location>'; \
+    echo '<Location "/merge-inherited">'; \
+    echo '    SecRule ARGS:localonly "@streq yes" "id:20010,phase:1,deny,status:403,log"'; \
+    echo '</Location>'; \
+    echo '# --- Request body limits ---'; \
+    echo '<Location "/bodylimit-reject">'; \
+    echo '    SecRequestBodyLimit 128'; \
+    echo '    SecRequestBodyLimitAction Reject'; \
+    echo '</Location>'; \
+    echo '<Location "/bodylimit-partial">'; \
+    echo '    SecRequestBodyLimit 128'; \
+    echo '    SecRequestBodyLimitAction ProcessPartial'; \
+    echo '</Location>'; \
+    echo '# --- Scoring ---'; \
+    echo '<Location "/scoring-absolute">'; \
+    echo '    SecRule ARGS "@streq badarg1" "id:20101,phase:2,pass,setvar:tx.score=1"'; \
+    echo '    SecRule ARGS "@streq badarg2" "id:20102,phase:2,pass,setvar:tx.score=2"'; \
+    echo '    SecRule TX:SCORE "@ge 2" "id:20199,phase:2,deny,log,status:403"'; \
+    echo '</Location>'; \
+    echo '<Location "/scoring-iterative">'; \
+    echo '    SecRule ARGS "@streq badarg1" "id:20201,phase:2,pass,setvar:tx.score=+1"'; \
+    echo '    SecRule ARGS "@streq badarg2" "id:20202,phase:2,pass,setvar:tx.score=+1"'; \
+    echo '    SecRule ARGS "@streq badarg3" "id:20203,phase:2,pass,setvar:tx.score=+1"'; \
+    echo '    SecRule TX:SCORE "@ge 3" "id:20299,phase:2,deny,log,status:403"'; \
+    echo '</Location>'; \
+    echo '# --- Transaction ID ---'; \
+    echo '<Location "/txid-test">'; \
+    echo '    CorazaTransactionId "TESTID-APACHE-001"'; \
+    echo '    SecRule ARGS:action "@streq block" "id:20301,phase:1,deny,status:403,log"'; \
+    echo '</Location>'; \
     } > /usr/local/apache2/conf/extra/coraza.conf && \
     echo "Include conf/extra/coraza.conf" >> /usr/local/apache2/conf/httpd.conf
 
