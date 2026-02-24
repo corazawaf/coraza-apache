@@ -85,7 +85,20 @@ RUN mkdir -p /var/log/coraza && \
     touch /var/log/coraza/audit.log && \
     chmod 777 /var/log/coraza && \
     chmod 666 /var/log/coraza/audit.log && \
-    echo "OK" > /usr/local/apache2/htdocs/index.html
+    echo "OK" > /usr/local/apache2/htdocs/index.html && \
+    # Test directories for <Directory> and .htaccess tests
+    mkdir -p /usr/local/apache2/htdocs/dir-protected && \
+    echo "OK" > /usr/local/apache2/htdocs/dir-protected/index.html && \
+    mkdir -p /usr/local/apache2/htdocs/dir-disabled && \
+    echo "OK" > /usr/local/apache2/htdocs/dir-disabled/index.html && \
+    mkdir -p /usr/local/apache2/htdocs/htaccess-protected && \
+    echo "OK" > /usr/local/apache2/htdocs/htaccess-protected/index.html && \
+    printf 'SecRule ARGS:block "@streq yes" "id:10002,phase:1,deny,status:403"\n' \
+        > /usr/local/apache2/htdocs/htaccess-protected/.htaccess && \
+    mkdir -p /usr/local/apache2/htdocs/htaccess-disabled && \
+    echo "OK" > /usr/local/apache2/htdocs/htaccess-disabled/index.html && \
+    printf 'Coraza Off\n' \
+        > /usr/local/apache2/htdocs/htaccess-disabled/.htaccess
 
 # Copy WAF rules config
 COPY coraza-waf.conf /etc/coraza/coraza-waf.conf
@@ -102,6 +115,18 @@ RUN { \
     echo '    Coraza Off'; \
     echo '    Require all granted'; \
     echo '</Location>'; \
+    echo '# Enable .htaccess processing'; \
+    echo '<Directory "/usr/local/apache2/htdocs">'; \
+    echo '    AllowOverride All'; \
+    echo '</Directory>'; \
+    echo '# Directory-based custom rule'; \
+    echo '<Directory "/usr/local/apache2/htdocs/dir-protected">'; \
+    echo '    SecRule ARGS:block "@streq yes" "id:10001,phase:1,deny,status:403"'; \
+    echo '</Directory>'; \
+    echo '# Directory-based WAF disable'; \
+    echo '<Directory "/usr/local/apache2/htdocs/dir-disabled">'; \
+    echo '    Coraza Off'; \
+    echo '</Directory>'; \
     } > /usr/local/apache2/conf/extra/coraza.conf && \
     echo "Include conf/extra/coraza.conf" >> /usr/local/apache2/conf/httpd.conf
 

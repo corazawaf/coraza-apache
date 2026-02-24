@@ -111,6 +111,27 @@ check_post "POST RCE: shell cmd"      "$URL/api" "cmd=;cat /etc/passwd"         
 check_post "POST RCE: pipe cmd"       "$URL/api" "cmd=|ls -la"                   403
 echo ""
 
+echo "--- <Directory> tests ---"
+check "Dir: normal allowed"           "$URL/dir-protected/"                       200
+check "Dir: custom rule blocks"       "$URL/dir-protected/?block=yes"             403
+check "Dir: custom rule allows"       "$URL/dir-protected/?block=no"              200
+check "Dir: Coraza Off normal"        "$URL/dir-disabled/"                        200
+check "Dir: Coraza Off SQLi pass"     "$URL/dir-disabled/?id=1%20OR%201=1"        200
+echo ""
+
+echo "--- .htaccess tests ---"
+check "htaccess: normal allowed"      "$URL/htaccess-protected/"                  200
+check "htaccess: custom rule blocks"  "$URL/htaccess-protected/?block=yes"        403
+check "htaccess: Coraza Off normal"   "$URL/htaccess-disabled/"                   200
+check "htaccess: Coraza Off SQLi"     "$URL/htaccess-disabled/?id=1%20OR%201=1"   200
+echo ""
+
+echo "--- Config inheritance (CRS rules in Directory/.htaccess) ---"
+check "Dir: CRS SQLi inherited"       "$URL/dir-protected/?id=1%20OR%201=1"       403
+check "htaccess: CRS SQLi inherited"  "$URL/htaccess-protected/?id=1%20OR%201=1"  403
+check_post "Dir: POST body RCE"       "$URL/dir-protected/" "cmd=;cat /etc/passwd" 403
+echo ""
+
 echo "=============================="
 printf "Results: %d passed, %d failed\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] && echo "All tests passed." || echo "Some tests FAILED."

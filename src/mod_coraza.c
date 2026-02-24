@@ -250,21 +250,21 @@ cmd_sec_directive(cmd_parms *cmd, void *dcfg, const char *args)
  */
 #define SEC_DIRECTIVE(name) \
     AP_INIT_RAW_ARGS(name, cmd_sec_directive, NULL, \
-                     RSRC_CONF | ACCESS_CONF, \
+                     RSRC_CONF | ACCESS_CONF | OR_ALL, \
                      "Native modsecurity directive (handled by Coraza)")
 
 static const command_rec coraza_directives[] = {
     AP_INIT_FLAG("Coraza", cmd_coraza_enable, NULL,
-                 RSRC_CONF | ACCESS_CONF,
+                 RSRC_CONF | ACCESS_CONF | OR_ALL,
                  "Enable or disable Coraza WAF"),
     AP_INIT_TAKE1("CorazaRules", cmd_coraza_rules, NULL,
-                  RSRC_CONF | ACCESS_CONF,
+                  RSRC_CONF | ACCESS_CONF | OR_ALL,
                   "Inline Coraza rules"),
     AP_INIT_TAKE1("CorazaRulesFile", cmd_coraza_rules_file, NULL,
-                  RSRC_CONF | ACCESS_CONF,
+                  RSRC_CONF | ACCESS_CONF | OR_ALL,
                   "Path to Coraza rules file"),
     AP_INIT_TAKE1("CorazaTransactionId", cmd_coraza_transaction_id, NULL,
-                  RSRC_CONF | ACCESS_CONF,
+                  RSRC_CONF | ACCESS_CONF | OR_ALL,
                   "Custom transaction ID"),
 
     /* Native Sec* directives — all handled by cmd_sec_directive */
