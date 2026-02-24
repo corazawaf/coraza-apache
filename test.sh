@@ -295,6 +295,14 @@ check_post_large "Partial: large OK"  "$URL/bodylimit-partial/" 200             
 check_post "Partial: attack found"    "$URL/bodylimit-partial/" "id=1 OR 1=1"     403
 echo ""
 
+echo "--- Inherited body limit tests ---"
+check_method_large "Inherited: GET large blocked"    "GET"    "$URL/bodylimit-inherited/" 200 413
+check_method_large "Inherited: POST large blocked"   "POST"   "$URL/bodylimit-inherited/" 200 413
+check_method_large "Inherited: PUT large blocked"    "PUT"    "$URL/bodylimit-inherited/" 200 413
+check_method_large "Inherited: DELETE large blocked"  "DELETE" "$URL/bodylimit-inherited/" 200 413
+check_method_large "Override: larger limit passes"   "POST"   "$URL/bodylimit-override/" 200  200
+echo ""
+
 echo "--- Scoring tests ---"
 check "Score abs: 1 arg pass"         "$URL/scoring-absolute?what=badarg1"        200
 check "Score abs: 2 arg block"        "$URL/scoring-absolute?what=badarg2"        403

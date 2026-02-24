@@ -181,6 +181,15 @@ RUN { \
     echo '    SecRequestBodyLimit 128'; \
     echo '    SecRequestBodyLimitAction ProcessPartial'; \
     echo '</Location>'; \
+    echo '# --- Inherited body limit with location override ---'; \
+    echo '<Location "/bodylimit-inherited">'; \
+    echo '    SecRequestBodyLimit 128'; \
+    echo '    SecRequestBodyLimitAction Reject'; \
+    echo '</Location>'; \
+    echo '<Location "/bodylimit-override">'; \
+    echo '    SecRequestBodyLimit 512'; \
+    echo '    SecRequestBodyLimitAction Reject'; \
+    echo '</Location>'; \
     echo '# --- Scoring ---'; \
     echo '<Location "/scoring-absolute">'; \
     echo '    SecRule ARGS "@streq badarg1" "id:20101,phase:2,pass,setvar:tx.score=1"'; \
