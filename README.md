@@ -113,8 +113,7 @@ the Go runtime inside libcoraza cannot be loaded before fork.
 ## Limitations
 
 - Tested with prefork and event MPMs
-- Only `<Location>` blocks, no `<Directory>` or .htaccess support yet
-- No `CorazaRulesRemote` directive yet
+- Only `<Location>` blocks — `<Directory>` and `.htaccess` support is the main priority
 
 ## License
 
