@@ -77,25 +77,33 @@ CorazaRulesFile /etc/coraza/coraza-waf.conf
 <Location /health>
     Coraza Off
 </Location>
+
+# Directory-based custom rule
+<Directory /var/www/uploads>
+    SecRule FILES_NAMES "\.php$" "id:10001,phase:2,deny,status:403"
+</Directory>
+
+# Disable via .htaccess (requires AllowOverride All)
+# In .htaccess: Coraza Off
 ```
 
 ### Directives
 
 **Sec\*** -- all standard modsecurity directives (`SecRuleEngine`, `SecRule`,
 `SecAction`, `SecRequestBodyAccess`, `SecAuditEngine`, etc.) are registered
-natively and can be used directly in Apache config files. Context: server config, `<Location>`.
+natively and can be used directly in Apache config files. Context: server config, `<VirtualHost>`, `<Location>`, `<Directory>`, `.htaccess`.
 
-**Coraza** On|Off -- enable or disable the module. Context: server config, `<Location>`.
+**Coraza** On|Off -- enable or disable the module. Context: server config, `<VirtualHost>`, `<Location>`, `<Directory>`, `.htaccess`.
 
-**CorazaRules** "..." -- inline rule or directive. Context: server config, `<Location>`.
+**CorazaRules** "..." -- inline rule or directive. Context: server config, `<VirtualHost>`, `<Location>`, `<Directory>`, `.htaccess`.
 
 **CorazaRulesFile** /path -- load rules from file. Use this for CRS and other rule
-files that reference relative data file paths. Context: server config, `<Location>`.
+files that reference relative data file paths. Context: server config, `<VirtualHost>`, `<Location>`, `<Directory>`, `.htaccess`.
 
-**CorazaTransactionId** "..." -- custom transaction ID. Context: server config, `<Location>`.
+**CorazaTransactionId** "..." -- custom transaction ID. Context: server config, `<VirtualHost>`, `<Location>`, `<Directory>`, `.htaccess`.
 
-Rules defined at server level are inherited by `<Location>` blocks.
-A `<Location>` with `Coraza Off` disables inspection for that path.
+Rules defined at server level are inherited by `<VirtualHost>`, `<Location>`, `<Directory>`, and `.htaccess`.
+Setting `Coraza Off` in any context disables inspection for that scope.
 
 ## How it works
 
@@ -113,7 +121,6 @@ the Go runtime inside libcoraza cannot be loaded before fork.
 ## Limitations
 
 - Tested with prefork and event MPMs
-- Only `<Location>` blocks — `<Directory>` and `.htaccess` support is the main priority
 
 ## License
 
