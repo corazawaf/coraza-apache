@@ -156,8 +156,17 @@ The Docker image configures:
 - **2 .htaccess files**: custom rule + `Coraza Off` (created during Docker build)
 - **mod_info**: enabled for MPM detection (`/server-info` with `Coraza Off`)
 
+## Stress Testing
+
+Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
+0 segfaults, container stable, memory plateaus after initial warmup.
+
+## Graceful Restart
+
+Validated `httpd -k graceful` survives multiple cycles including 3 rapid
+restarts (1s apart). Full 124-test suite passes after all restarts.
+Old workers clean up WAFs on exit, new workers rebuild via child_init.
+
 ## What's Not Covered
 
 - Redirect interventions (`intervention->url` not available in libcoraza)
-- Concurrent request stress testing
-- Graceful restart / config reload
