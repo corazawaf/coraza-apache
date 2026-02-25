@@ -161,6 +161,22 @@ clear_perloc_audit_logs() {
     docker exec "$CONTAINER" sh -c 'for f in /var/log/coraza/audit/*.log; do [ -f "$f" ] && truncate -s 0 "$f"; done' 2>/dev/null
 }
 
+check_vhost() {
+    desc="$1"
+    host="$2"
+    url="$3"
+    expected="$4"
+
+    code=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: $host" "$url")
+    if [ "$code" = "$expected" ]; then
+        printf "  PASS  %s -> %s\n" "$desc" "$code"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> %s (expected %s)\n" "$desc" "$code" "$expected"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 echo "Coraza WAF test suite"
 echo "Target: $URL"
 
@@ -337,6 +353,17 @@ check_body "Error page: 401 body"       "$URL/errorpage-401?action=block"       
 check_body "Error page: CRS block body" "$URL/?id=1%20OR%201=1"                    403 "CORAZA_CUSTOM_ERROR_PAGE"
 check_body "Error page: pass no error"  "$URL/errorpage-test?action=safe"          200 "CORAZA_CUSTOM_ERROR_PAGE" "!"
 check_body "Error page: clean 200 body" "$URL/"                                    200 "OK"
+echo ""
+
+echo "--- VirtualHost isolation tests ---"
+check_vhost "VHost-off: normal request"      "vhost-off.test"    "$URL/"                              200
+check_vhost "VHost-off: SQLi passes"         "vhost-off.test"    "$URL/?id=1%20OR%201=1"              200
+check_vhost "VHost-off: XSS passes"          "vhost-off.test"    "$URL/?q=<script>alert(1)</script>"  200
+check_vhost "VHost-custom: normal request"   "vhost-custom.test" "$URL/"                              200
+check_vhost "VHost-custom: rule blocks"      "vhost-custom.test" "$URL/?vhaction=block"               403
+check_vhost "VHost-custom: rule passes"      "vhost-custom.test" "$URL/?vhaction=safe"                200
+check_vhost "VHost-custom: CRS SQLi blocked"  "vhost-custom.test" "$URL/?id=1%20OR%201=1"              403
+check "Main server: SQLi still blocked"      "$URL/?id=1%20OR%201=1"                                  403
 echo ""
 
 # Audit log tests (require --container)

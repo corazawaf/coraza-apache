@@ -261,6 +261,22 @@ RUN { \
     echo '    CorazaTransactionId "TESTID-APACHE-001"'; \
     echo '    SecRule ARGS:action "@streq block" "id:20301,phase:1,deny,status:403,log"'; \
     echo '</Location>'; \
+    echo '# --- VirtualHost isolation ---'; \
+    echo '# Default VHost for localhost — inherits server-level config'; \
+    echo '<VirtualHost *:80>'; \
+    echo '    ServerName localhost'; \
+    echo '</VirtualHost>'; \
+    echo '<VirtualHost *:80>'; \
+    echo '    ServerName vhost-off.test'; \
+    echo '    DocumentRoot "/usr/local/apache2/htdocs"'; \
+    echo '    Coraza Off'; \
+    echo '</VirtualHost>'; \
+    echo '<VirtualHost *:80>'; \
+    echo '    ServerName vhost-custom.test'; \
+    echo '    DocumentRoot "/usr/local/apache2/htdocs"'; \
+    echo '    Coraza On'; \
+    echo '    SecRule ARGS:vhaction "@streq block" "id:40001,phase:1,deny,status:403,log"'; \
+    echo '</VirtualHost>'; \
     } > /usr/local/apache2/conf/extra/coraza.conf && \
     echo "Include conf/extra/coraza.conf" >> /usr/local/apache2/conf/httpd.conf
 

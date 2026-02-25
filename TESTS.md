@@ -1,7 +1,7 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **113 tests** against a Docker
-container with CRS v4 and multiple Location/Directory/.htaccess configurations.
+The integration test suite (`test.sh`) runs **121 tests** against a Docker
+container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
 
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess configurations.
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (113 tests, event MPM)
+# Full suite (121 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (93 tests, no audit/debug log checks, no MPM verification)
+# Minimal (101 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -110,6 +110,20 @@ Verifies rules from one Location don't leak into another.
 `ErrorDocument 403` and `ErrorDocument 401` with `Coraza Off` on the error
 page Location. Verifies error page body is served on block and not on pass.
 
+### VirtualHost Isolation (8 tests)
+
+Three name-based VirtualHosts tested via explicit `Host:` headers. A default
+VirtualHost for `localhost` preserves main server behavior for existing tests.
+
+Server-level CRS rules inherit into VirtualHosts (Apache copies parent server
+config as base). `Coraza Off` in a VirtualHost fully disables inspection.
+
+| VirtualHost | Config | Tests | Covers |
+|-------------|--------|-------|--------|
+| `vhost-off.test` | `Coraza Off` | 3 | Normal OK, SQLi passes, XSS passes |
+| `vhost-custom.test` | `Coraza On` + 1 custom rule | 4 | Normal OK, custom rule blocks/passes, inherited CRS blocks SQLi |
+| Main server | CRS enabled | 1 | SQLi still blocked (regression check) |
+
 ### Audit Log (7 tests, requires `--container`)
 
 | Scenario | Tests |
@@ -138,6 +152,7 @@ The Docker image configures:
 - **Server level**: `Coraza On`, CRS v4 via `CorazaRulesFile`, `ErrorDocument 403/401`
 - **27 Location blocks**: per-phase rules, config merging, body limits, scoring,
   audit/debug log isolation, rule isolation, error pages, transaction ID, status codes
+- **2 VirtualHost blocks**: `vhost-off.test` (Coraza Off), `vhost-custom.test` (custom rule, no CRS)
 - **2 Directory blocks**: custom rule + `Coraza Off`
 - **2 .htaccess files**: custom rule + `Coraza Off` (created during Docker build)
 - **mod_info**: enabled for MPM detection (`/server-info` with `Coraza Off`)
@@ -146,7 +161,6 @@ The Docker image configures:
 
 - Response header/body inspection (`RESPONSE_HEADERS`, `RESPONSE_BODY` SecRule
   variables don't work — Coraza engine limitation)
-- `VirtualHost` config merging
 - Redirect interventions (`intervention->url` not available in libcoraza)
 - Concurrent request stress testing
 - Graceful restart / config reload
