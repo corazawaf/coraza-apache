@@ -13,6 +13,12 @@
 
 #include "mod_coraza.h"
 
+/*
+ * Input filter (fallback for streaming body inspection).
+ * Normally the fixups hook reads the body proactively, making this filter
+ * a no-op. It only activates if a content handler reads the body itself
+ * before fixups consumed it (unlikely but possible with custom handlers).
+ */
 apr_status_t
 coraza_input_filter(ap_filter_t *f, apr_bucket_brigade *bb,
                     ap_input_mode_t mode, apr_read_type_e block,
@@ -23,12 +29,13 @@ coraza_input_filter(ap_filter_t *f, apr_bucket_brigade *bb,
     apr_bucket *b;
     int ret;
 
+    /* Remove self if body was already read in fixups or intervention fired */
     if (ctx == NULL || ctx->intervention_triggered || ctx->phase2_done) {
         ap_remove_input_filter(f);
         return ap_get_brigade(f->next, bb, mode, block, readbytes);
     }
 
-    /* Get data from the next filter */
+    /* Fetch the next bucket brigade from the filter chain below us */
     rv = ap_get_brigade(f->next, bb, mode, block, readbytes);
     if (rv != APR_SUCCESS) {
         return rv;
@@ -58,6 +65,7 @@ coraza_input_filter(ap_filter_t *f, apr_bucket_brigade *bb,
             break;
         }
 
+        /* Skip non-data buckets (flush, metadata) */
         if (APR_BUCKET_IS_METADATA(b)) {
             continue;
         }

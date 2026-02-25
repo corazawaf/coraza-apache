@@ -18,6 +18,16 @@
 #include "mod_coraza.h"
 #include <string.h>
 
+/*
+ * Fixups hook (runs as APR_HOOK_REALLY_FIRST):
+ * - Phase 1: feed connection info, URI, method, and request headers to Coraza
+ * - Phase 2: proactively read and inspect the full request body
+ *
+ * We use fixups instead of post_read_request because Apache resolves
+ * per-dir config (<Location>) only after map_to_storage. Reading the body
+ * here ensures the WAF inspects it even for handlers that never consume
+ * it (e.g. static file serving returning 404).
+ */
 int
 coraza_post_read_request(request_rec *r)
 {
@@ -141,12 +151,15 @@ coraza_post_read_request(request_rec *r)
         char buf[8192];
         long nread;
 
+        /* Prepare to read the request body with automatic chunked decoding */
         rc = ap_setup_client_block(r, REQUEST_CHUNKED_DECHUNK);
         if (rc != OK) {
             return rc;
         }
 
+        /* ap_should_client_block: returns true if there is a body to read */
         if (ap_should_client_block(r)) {
+            /* ap_get_client_block: reads up to N bytes, returns count or -1 */
             while ((nread = ap_get_client_block(r, buf, sizeof(buf))) > 0) {
                 coraza_append_request_body(ctx->transaction,
                                            (unsigned char *)buf, (int)nread);

@@ -76,39 +76,59 @@ typedef struct {
 typedef struct {
     coraza_transaction_t  transaction;
     apr_bucket_brigade   *pending_brigade;  /* buffered body for header delay */
-    int headers_delayed;
-    int phase2_done;
-    int phase3_done;
-    int phase4_done;
-    int logged;
-    int intervention_triggered;
+    int headers_delayed;           /* response held back pending body inspection */
+    int phase2_done;               /* request body processed */
+    int phase3_done;               /* response headers processed */
+    int phase4_done;               /* response body processed */
+    int logged;                    /* audit log already emitted (prevents double-log) */
+    int intervention_triggered;    /* WAF denied the request */
 } coraza_request_ctx_t;
 
 
 extern module AP_MODULE_DECLARE_DATA coraza_module;
 
 /* mod_coraza.c */
+
+/* Check WAF intervention; return HTTP status (e.g. 403) or OK if none.
+ * If early_log is set, triggers audit logging before returning. */
 int coraza_process_intervention(coraza_transaction_t transaction,
                                 request_rec *r, int early_log);
+
+/* Create per-request context with a WAF transaction.
+ * Lazily builds a WAF for the dir_conf if needed (3-tier cache). */
 coraza_request_ctx_t *coraza_create_ctx(request_rec *r);
+
+/* Build a WAF handle by replaying a deferred rules array via libcoraza. */
 coraza_waf_t coraza_build_waf(apr_array_header_t *rules, server_rec *s);
 
 /* mod_coraza_dl.c */
+
+/* dlopen libcoraza.so and resolve all function pointers. */
 int coraza_dl_open(server_rec *s);
+
+/* dlclose libcoraza.so. */
 void coraza_dl_close(server_rec *s);
 
 /* mod_coraza_phase1.c */
+
+/* Fixups hook: phases 1+2 — connection, URI, headers, request body. */
 int coraza_post_read_request(request_rec *r);
 
 /* mod_coraza_body_in.c */
+
+/* Input filter fallback: inspects body if fixups didn't read it. */
 apr_status_t coraza_input_filter(ap_filter_t *f, apr_bucket_brigade *bb,
                                  ap_input_mode_t mode, apr_read_type_e block,
                                  apr_off_t readbytes);
 
 /* mod_coraza_filter_out.c */
+
+/* Output filter: response headers (phase 3), body (phase 4), header delay. */
 apr_status_t coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb);
 
 /* mod_coraza_log.c */
+
+/* Log transaction hook: phase 5 audit logging. */
 int coraza_log_transaction(request_rec *r);
 
 #endif /* MOD_CORAZA_H */

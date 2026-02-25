@@ -15,6 +15,14 @@
 #include "mod_coraza.h"
 #include <string.h>
 
+/*
+ * Output filter: phases 3 (response headers) and 4 (response body).
+ *
+ * Implements header delay: buffers all output buckets in a pending brigade
+ * until EOS arrives and body inspection passes. This lets the WAF reject
+ * a response mid-stream with a clean error page instead of aborting after
+ * 200 headers have already been sent to the client.
+ */
 apr_status_t
 coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 {
@@ -84,7 +92,8 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             return APR_EGENERAL;
         }
 
-        /* Begin header delay for non-HEAD, non-subrequest, non-error */
+        /* Begin header delay — skip for HEAD (no body), subrequests (internal),
+         * and error responses (already have final status, e.g. ErrorDocument) */
         if (r->header_only || r->main != NULL || r->status >= 400) {
             /* Skip delay */
         } else {
@@ -162,7 +171,7 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             /* Phase 4 completed clean -- release everything */
             ctx->headers_delayed = 0;
 
-            /* Move any pending buckets before current brigade */
+            /* Prepend pending before current brigade to maintain order */
             APR_BRIGADE_PREPEND(bb, ctx->pending_brigade);
 
             ap_remove_output_filter(f);
@@ -175,7 +184,7 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
     /* Not the last buffer yet */
     if (ctx->headers_delayed) {
-        /* Accumulate buckets in pending brigade */
+        /* Accumulate into pending brigade during header delay */
         APR_BRIGADE_CONCAT(ctx->pending_brigade, bb);
         return APR_SUCCESS;
     }

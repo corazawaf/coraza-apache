@@ -55,6 +55,7 @@ typedef struct {
 static waf_cache_entry_t g_waf_cache[WAF_CACHE_MAX];
 static int g_waf_cache_count = 0;
 
+/* DJB2 hash over rule content (type + value strings). */
 static unsigned long
 rules_hash(apr_array_header_t *rules)
 {
@@ -99,6 +100,12 @@ waf_cache_add(unsigned long hash, int nelts, coraza_waf_t waf)
 /* Intervention processing                                             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Check if the WAF engine has queued an intervention (block/deny/redirect).
+ * Returns OK if no action needed, or an HTTP status code (e.g. 403) to abort.
+ * When early_log is set, triggers audit logging immediately so the denied
+ * request is logged even though the log_transaction hook hasn't run yet.
+ */
 int
 coraza_process_intervention(coraza_transaction_t transaction,
                             request_rec *r, int early_log)
@@ -160,6 +167,14 @@ coraza_cleanup_transaction(void *data)
 /* Create per-request context with transaction                         */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Allocate a per-request context and create a WAF transaction.
+ * The WAF handle is resolved with a 3-tier strategy:
+ *   1. merge_child fast path — reuse WAF already built for the stable child
+ *   2. Content-hash cache — O(N) scan of cached WAFs by rule content hash
+ *   3. Build new WAF — compile rules, add to cache
+ * Falls back to the server-level WAF if the dir_conf has no rules.
+ */
 coraza_request_ctx_t *
 coraza_create_ctx(request_rec *r)
 {
@@ -242,6 +257,7 @@ coraza_create_ctx(request_rec *r)
 /* Directive handlers                                                  */
 /* ------------------------------------------------------------------ */
 
+/* Handle "Coraza On|Off" — sets enable flag for this scope. */
 static const char *
 cmd_coraza_enable(cmd_parms *cmd, void *dcfg, int flag)
 {
@@ -250,6 +266,9 @@ cmd_coraza_enable(cmd_parms *cmd, void *dcfg, int flag)
     return NULL;
 }
 
+/* Handle "CorazaRules <rule>" — store an inline rule string.
+ * Server-level rules (cmd->path==NULL) also go into scf->rules for the
+ * fallback WAF; per-dir rules stay in the dir_conf only. */
 static const char *
 cmd_coraza_rules(cmd_parms *cmd, void *dcfg, const char *arg)
 {
@@ -276,6 +295,9 @@ cmd_coraza_rules(cmd_parms *cmd, void *dcfg, const char *arg)
     return NULL;
 }
 
+/* Handle "CorazaRulesFile <path>" — store a rules file path.
+ * Paths with relative @pmFromFile data are resolved by Coraza relative
+ * to the rules file, not the Apache config. */
 static const char *
 cmd_coraza_rules_file(cmd_parms *cmd, void *dcfg, const char *arg)
 {
@@ -302,6 +324,7 @@ cmd_coraza_rules_file(cmd_parms *cmd, void *dcfg, const char *arg)
     return NULL;
 }
 
+/* Handle "CorazaTransactionId <id>" — override auto-generated transaction ID. */
 static const char *
 cmd_coraza_transaction_id(cmd_parms *cmd, void *dcfg, const char *arg)
 {
@@ -430,6 +453,7 @@ static const command_rec coraza_directives[] = {
 /* Config creation and merge                                           */
 /* ------------------------------------------------------------------ */
 
+/* Allocate a fresh per-directory config with enable=-1 (unset). */
 static void *
 coraza_create_dir_conf(apr_pool_t *p, char *dir)
 {
@@ -442,6 +466,8 @@ coraza_create_dir_conf(apr_pool_t *p, char *dir)
     return dcf;
 }
 
+/* Merge parent + child dir_confs: child enable/txid override parent when set,
+ * parent rules are prepended before child rules for correct evaluation order. */
 static void *
 coraza_merge_dir_conf(apr_pool_t *p, void *parent, void *child)
 {
@@ -496,6 +522,8 @@ coraza_merge_dir_conf(apr_pool_t *p, void *parent, void *child)
     return merged;
 }
 
+/* Allocate per-server config. Also resets the global dir_conf tracker
+ * (Apache may parse config multiple times: -t, graceful restart). */
 static void *
 coraza_create_server_conf(apr_pool_t *p, server_rec *s)
 {
@@ -521,6 +549,11 @@ coraza_create_server_conf(apr_pool_t *p, server_rec *s)
 /* Helper: build a WAF from a rules array                              */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Replay a deferred rules array through libcoraza to produce a WAF handle.
+ * Each entry is either an inline rule string (coraza_rules_add) or a file
+ * path (coraza_rules_add_file). Returns 0 on failure.
+ */
 coraza_waf_t
 coraza_build_waf(apr_array_header_t *rules, server_rec *s)
 {
@@ -590,6 +623,14 @@ coraza_build_waf(apr_array_header_t *rules, server_rec *s)
 /* child_init: called in each child after fork                         */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Post-fork initialization in each child process:
+ *   Step 1: dlopen libcoraza.so (Go runtime starts fresh in child)
+ *   Step 2: Build server-level WAFs for all server_recs (main + VHosts)
+ *   Step 3: Build WAFs for tracked dir_confs (Location/Directory merges)
+ * After this, g_tracked_dir_confs is frozen to prevent dangling pointers
+ * from request-time merges (.htaccess) into the config-time array.
+ */
 static void
 coraza_child_init(apr_pool_t *p, server_rec *s)
 {
@@ -701,6 +742,12 @@ coraza_child_init(apr_pool_t *p, server_rec *s)
 /* child_exit: cleanup when a child shuts down                         */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Child process cleanup: free all WAF handles then dlclose libcoraza.
+ * Deduplicates shared WAF pointers: dir_conf WAFs that point to a server
+ * WAF are zeroed first, then earlier dir_conf duplicates are skipped,
+ * ensuring each unique WAF is freed exactly once.
+ */
 static apr_status_t
 coraza_child_exit(void *data)
 {
@@ -771,6 +818,8 @@ coraza_child_exit(void *data)
 /* post_config: log rule counts                                        */
 /* ------------------------------------------------------------------ */
 
+/* Post-config hook: log collected rule counts for each server_rec.
+ * WAFs aren't built yet (that happens post-fork in child_init). */
 static int
 coraza_post_config(apr_pool_t *pconf, apr_pool_t *plog,
                    apr_pool_t *ptemp, server_rec *s)
@@ -838,7 +887,10 @@ AP_DECLARE_MODULE(coraza) = {
     coraza_create_dir_conf,     /* create per-dir config */
     coraza_merge_dir_conf,      /* merge per-dir config */
     coraza_create_server_conf,  /* create per-server config */
-    NULL,                       /* merge per-server config */
+    NULL,                       /* merge per-server config — intentionally NULL:
+                                 * Apache copies the parent server config as the
+                                 * base for each VirtualHost, so CRS rules from
+                                 * server scope inherit automatically. */
     coraza_directives,          /* directives */
     coraza_register_hooks       /* register hooks */
 };
