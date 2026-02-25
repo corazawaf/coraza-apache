@@ -10,7 +10,7 @@
  * thin wrapper that forwards to the real symbol resolved via dlsym().
  */
 
-#include <dlfcn.h>
+#include "dynlib.h"
 #include "mod_coraza.h"
 
 /* ------------------------------------------------------------------ */
@@ -77,7 +77,7 @@ static fn_coraza_process_logging         dl_process_logging;
 static fn_coraza_update_status_code      dl_update_status_code;
 static fn_coraza_add_get_args            dl_add_get_args;
 
-static void *dl_handle;
+static dynlib_t dl_handle;
 
 /* ------------------------------------------------------------------ */
 /* Resolve one symbol -- returns HTTP_INTERNAL_SERVER_ERROR on failure  */
@@ -85,12 +85,12 @@ static void *dl_handle;
 
 #define DL_SYM(ptr, name)                                               \
     do {                                                                \
-        *(void **)(&ptr) = dlsym(dl_handle, #name);                    \
+        *(void **)(&ptr) = dynlib_sym(dl_handle, #name);               \
         if ((ptr) == NULL) {                                            \
             ap_log_error(APLOG_MARK, APLOG_EMERG, 0, s,               \
-                         "coraza: dlsym(\"%s\") failed: %s",           \
-                         #name, dlerror());                             \
-            dlclose(dl_handle);                                        \
+                         "coraza: dynlib_sym(\"%s\") failed: %s",      \
+                         #name, dynlib_error());                        \
+            dynlib_close(dl_handle);                                   \
             dl_handle = NULL;                                          \
             return HTTP_INTERNAL_SERVER_ERROR;                          \
         }                                                              \
@@ -107,11 +107,11 @@ coraza_dl_open(server_rec *s)
         return OK;
     }
 
-    dl_handle = dlopen("libcoraza.so", RTLD_NOW | RTLD_LOCAL);
+    dl_handle = dynlib_open("libcoraza" DYNLIB_EXT);
     if (dl_handle == NULL) {
         ap_log_error(APLOG_MARK, APLOG_EMERG, 0, s,
-                     "coraza: dlopen(\"libcoraza.so\") failed: %s",
-                     dlerror());
+                     "coraza: dynlib_open(\"libcoraza" DYNLIB_EXT "\") failed: %s",
+                     dynlib_error());
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
@@ -144,7 +144,7 @@ coraza_dl_open(server_rec *s)
     DL_SYM(dl_add_get_args,             coraza_add_get_args);
 
     ap_log_error(APLOG_MARK, APLOG_NOTICE, 0, s,
-                 "coraza: libcoraza.so loaded via dlopen");
+                 "coraza: libcoraza" DYNLIB_EXT " loaded via dynlib_open");
 
     return OK;
 }
@@ -157,10 +157,10 @@ void
 coraza_dl_close(server_rec *s)
 {
     if (dl_handle != NULL) {
-        dlclose(dl_handle);
+        dynlib_close(dl_handle);
         dl_handle = NULL;
         ap_log_error(APLOG_MARK, APLOG_NOTICE, 0, s,
-                     "coraza: libcoraza.so unloaded");
+                     "coraza: libcoraza" DYNLIB_EXT " unloaded");
     }
 }
 
