@@ -107,10 +107,11 @@ coraza_dl_open(server_rec *s)
         return OK;
     }
 
-    dl_handle = dynlib_open("libcoraza" DYNLIB_EXT);
+    dl_handle = dynlib_open(CORAZA_DYNLIB_BASENAME DYNLIB_EXT);
     if (dl_handle == NULL) {
         ap_log_error(APLOG_MARK, APLOG_EMERG, 0, s,
-                     "coraza: dynlib_open(\"libcoraza" DYNLIB_EXT "\") failed: %s",
+                     "coraza: dynlib_open(\"%s\") failed: %s",
+                     CORAZA_DYNLIB_BASENAME DYNLIB_EXT,
                      dynlib_error());
         return HTTP_INTERNAL_SERVER_ERROR;
     }
@@ -144,7 +145,8 @@ coraza_dl_open(server_rec *s)
     DL_SYM(dl_add_get_args,             coraza_add_get_args);
 
     ap_log_error(APLOG_MARK, APLOG_NOTICE, 0, s,
-                 "coraza: libcoraza" DYNLIB_EXT " loaded via dynlib_open");
+                 "coraza: %s loaded via dynlib_open",
+                 CORAZA_DYNLIB_BASENAME DYNLIB_EXT);
 
     return OK;
 }
@@ -160,7 +162,8 @@ coraza_dl_close(server_rec *s)
         dynlib_close(dl_handle);
         dl_handle = NULL;
         ap_log_error(APLOG_MARK, APLOG_NOTICE, 0, s,
-                     "coraza: libcoraza" DYNLIB_EXT " unloaded");
+                     "coraza: %s unloaded",
+                     CORAZA_DYNLIB_BASENAME DYNLIB_EXT);
     }
 }
 
