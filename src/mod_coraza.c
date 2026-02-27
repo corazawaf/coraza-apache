@@ -756,7 +756,10 @@ coraza_child_exit(void *data)
     coraza_server_conf_t *scf;
     int i;
 
-    /* Free dir_conf WAFs (config-time only — frozen in child_init) */
+    /* Free dir_conf WAFs (config-time only — frozen in child_init).
+     * Two-pass approach: first pass frees unique WAFs while keeping
+     * pointers intact for dedup comparison, second pass zeroes all.
+     * This prevents double-free when multiple dir_confs share a handle. */
     if (g_config_dir_confs != NULL) {
         coraza_dir_conf_t **dir_confs;
         dir_confs = (coraza_dir_conf_t **)g_config_dir_confs->elts;
@@ -778,11 +781,10 @@ coraza_child_exit(void *data)
                 }
             }
             if (skip) {
-                dcf->waf = 0;
                 continue;
             }
 
-            /* Skip if an earlier dir_conf shares this WAF */
+            /* Skip if an earlier dir_conf already freed this WAF */
             int j, shared = 0;
             for (j = 0; j < i; j++) {
                 if (dir_confs[j]->waf == dcf->waf) {
@@ -793,7 +795,9 @@ coraza_child_exit(void *data)
             if (!shared) {
                 coraza_free_waf(dcf->waf);
             }
-            dcf->waf = 0;
+        }
+        for (i = 0; i < g_config_dir_confs->nelts; i++) {
+            dir_confs[i]->waf = 0;
         }
     }
 
