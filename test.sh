@@ -157,8 +157,47 @@ check_perloc_audit_log() {
     fi
 }
 
+check_perloc_audit_log_absent() {
+    desc="$1"
+    file="$2"
+    pattern="$3"
+
+    if docker exec "$CONTAINER" grep -q "$pattern" "$file" 2>/dev/null; then
+        printf "  FAIL  %s (pattern '%s' found in %s)\n" "$desc" "$pattern" "$file"
+        FAIL=$((FAIL + 1))
+    else
+        printf "  PASS  %s\n" "$desc"
+        PASS=$((PASS + 1))
+    fi
+}
+
 clear_perloc_audit_logs() {
     docker exec "$CONTAINER" sh -c 'for f in /var/log/coraza/audit/*.log; do [ -f "$f" ] && truncate -s 0 "$f"; done' 2>/dev/null
+}
+
+check_redirect() {
+    desc="$1"
+    url="$2"
+    expected_code="$3"
+    expected_location="$4"
+
+    resp=$(curl -s -o /dev/null -D - -w "\n%{http_code}" "$url")
+    code=$(echo "$resp" | tail -1)
+    location=$(echo "$resp" | grep -i '^Location:' | tr -d '\r' | sed 's/^[Ll]ocation: //')
+
+    if [ "$code" = "$expected_code" ] && [ "$location" = "$expected_location" ]; then
+        printf "  PASS  %s -> %s Location: %s\n" "$desc" "$code" "$location"
+        PASS=$((PASS + 1))
+    else
+        reason=""
+        [ "$code" != "$expected_code" ] && reason="status $code != $expected_code"
+        if [ "$location" != "$expected_location" ]; then
+            [ -n "$reason" ] && reason="$reason, "
+            reason="${reason}Location: '${location}' != '${expected_location}'"
+        fi
+        printf "  FAIL  %s (%s)\n" "$desc" "$reason"
+        FAIL=$((FAIL + 1))
+    fi
 }
 
 check_vhost() {
@@ -362,6 +401,13 @@ check_body "Error page: pass no error"  "$URL/errorpage-test?action=safe"       
 check_body "Error page: clean 200 body" "$URL/"                                    200 "OK"
 echo ""
 
+echo "--- Redirect tests ---"
+check_redirect "302 redirect: status + Location"  "$URL/redirect-302?target=redirect"  302 "http://www.coraza.io"
+check_redirect "301 redirect: status + Location"  "$URL/redirect-301?target=redirect"  301 "http://www.coraza.io"
+check "302 redirect: clean passes"                 "$URL/redirect-302?target=safe"      200
+check "301 redirect: clean passes"                 "$URL/redirect-301?target=safe"      200
+echo ""
+
 echo "--- VirtualHost isolation tests ---"
 check_vhost "VHost-off: normal request"      "vhost-off.test"    "$URL/"                              200
 check_vhost "VHost-off: SQLi passes"         "vhost-off.test"    "$URL/?id=1%20OR%201=1"              200
@@ -428,11 +474,26 @@ if [ -n "$CONTAINER" ]; then
     check_perloc_audit_log "AuditLog: sub4.log has sub4withE req"   "/var/log/coraza/audit/sub4.log" "what=sub4withE"
     check_perloc_audit_log "AuditLog: sub4.log has E section"       "/var/log/coraza/audit/sub4.log" "\-E\-\-"
     echo ""
+
+    echo "--- auditlog action with RelevantOnly tests ---"
+    clear_perloc_audit_logs
+    # trigger=yes should match the rule and set auditlog flag
+    curl -s -o /dev/null "$URL/auditlog-relevant?trigger=yes"
+    # trigger=no should NOT match the rule, no auditlog flag
+    curl -s -o /dev/null "$URL/auditlog-relevant?trigger=no"
+    # noauditlog: trigger=yes matches but auditlog flag is cleared
+    curl -s -o /dev/null "$URL/auditlog-relevant-nolog?trigger=yes"
+    sleep 1
+    check_perloc_audit_log "RelevantOnly: trigger=yes logged"          "/var/log/coraza/audit/relevant.log" "trigger=yes"
+    check_perloc_audit_log_absent "RelevantOnly: trigger=no NOT logged"    "/var/log/coraza/audit/relevant.log" "trigger=no"
+    check_perloc_audit_log_absent "noauditlog: trigger=yes NOT logged"     "/var/log/coraza/audit/relevant-nolog.log" "trigger=yes"
+    echo ""
 else
     echo "--- Audit log tests (skipped: use --container=NAME) ---"
     echo "--- Transaction ID audit log tests (skipped: use --container=NAME) ---"
     echo "--- Debug log per-location isolation tests (skipped: use --container=NAME) ---"
     echo "--- Per-location audit log isolation tests (skipped: use --container=NAME) ---"
+    echo "--- auditlog action with RelevantOnly tests (skipped: use --container=NAME) ---"
     echo ""
 fi
 

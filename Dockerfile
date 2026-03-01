@@ -11,7 +11,7 @@ RUN set -eux; \
         bash \
         make
 
-ARG LIBCORAZA_VERSION=v1.0.0
+ARG LIBCORAZA_VERSION=v1.1.0
 
 RUN set -eux; \
     wget https://github.com/corazawaf/libcoraza/tarball/${LIBCORAZA_VERSION} -O /tmp/libcoraza.tar.gz; \
@@ -154,6 +154,13 @@ RUN { \
     echo '<Location "/errorpage-401">'; \
     echo '    SecRule ARGS:action "@streq block" "id:20602,phase:1,deny,status:401,log"'; \
     echo '</Location>'; \
+    echo '# --- Redirect tests ---'; \
+    echo '<Location "/redirect-302">'; \
+    echo '    SecRule ARGS:target "@streq redirect" "id:20701,phase:1,status:302,log,redirect:http://www.coraza.io"'; \
+    echo '</Location>'; \
+    echo '<Location "/redirect-301">'; \
+    echo '    SecRule ARGS:target "@streq redirect" "id:20702,phase:1,status:301,log,redirect:http://www.coraza.io"'; \
+    echo '</Location>'; \
     echo '# --- Per-phase testing ---'; \
     echo '<Location "/phase1">'; \
     echo '    SecRule ARGS:action "@streq block403" "id:20001,phase:1,deny,status:403,log"'; \
@@ -254,6 +261,23 @@ RUN { \
     echo '    SecAuditLog /var/log/coraza/audit/sub4.log'; \
     echo '    SecRule ARGS:what "@streq sub4" "id:31005,phase:1,pass,log"'; \
     echo '    SecRule ARGS:what "@streq sub4withE" "id:31006,phase:1,pass,log,ctl:auditLogParts=+E"'; \
+    echo '</Location>'; \
+    echo '# --- auditlog action with RelevantOnly ---'; \
+    echo '<Location "/auditlog-relevant">'; \
+    echo '    SecAuditEngine RelevantOnly'; \
+    echo '    SecAuditLogRelevantStatus ".*"'; \
+    echo '    SecAuditLogParts ABHZ'; \
+    echo '    SecAuditLogType Serial'; \
+    echo '    SecAuditLog /var/log/coraza/audit/relevant.log'; \
+    echo '    SecRule ARGS:trigger "@streq yes" "id:31010,phase:1,pass,auditlog"'; \
+    echo '</Location>'; \
+    echo '<Location "/auditlog-relevant-nolog">'; \
+    echo '    SecAuditEngine RelevantOnly'; \
+    echo '    SecAuditLogRelevantStatus ".*"'; \
+    echo '    SecAuditLogParts ABHZ'; \
+    echo '    SecAuditLogType Serial'; \
+    echo '    SecAuditLog /var/log/coraza/audit/relevant-nolog.log'; \
+    echo '    SecRule ARGS:trigger "@streq yes" "id:31011,phase:1,pass,noauditlog"'; \
     echo '</Location>'; \
     echo '# --- Response phase testing (phases 3+4) ---'; \
     echo '<Location "/phase3">'; \

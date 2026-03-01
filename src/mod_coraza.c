@@ -135,6 +135,10 @@ coraza_process_intervention(coraza_transaction_t transaction,
             ctx->logged = 1;
         }
 
+        if (intervention->data != NULL) {
+            apr_table_set(r->headers_out, "Location", intervention->data);
+        }
+
         int status = intervention->status;
         coraza_free_intervention(intervention);
         return status;
