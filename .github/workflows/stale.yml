@@ -1,0 +1,25 @@
+name: "Close stale issues"
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@b5d41d4e1d5dceea10e7104786b73624c18a190f # v10
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          stale-issue-message: 'This issue is stale because it has been open 30 days with no activity. Remove stale label or comment or this will be closed in 5 days'
+          stale-pr-message: 'This pull request is stale because it has been open 30 days with no activity. Remove stale label or comment or this will be closed in 5 days'
+          stale-issue-label: 'no-issue-activity'
+          stale-pr-label: 'no-pr-activity'
+          exempt-issue-label: 'nostale,work-in-progress'
+          days-before-stale: 30
+          days-before-close: 5
