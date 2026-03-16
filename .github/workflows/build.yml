@@ -1,0 +1,68 @@
+name: Build and Test
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.mpm }} MPM)
+    runs-on: ubuntu-22.04
+    env:
+      libcoraza_version: v1.1.0
+    strategy:
+      matrix:
+        mpm: [event, prefork]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Build Docker image
+        run: |
+          docker build --no-cache \
+            --build-arg MPM=${{ matrix.mpm }} \
+            -t coraza-apache-${{ matrix.mpm }} .
+
+      - name: Start Apache container
+        run: |
+          docker run --rm -d \
+            --name coraza-apache-${{ matrix.mpm }} \
+            -p 8888:80 \
+            coraza-apache-${{ matrix.mpm }}
+
+      - name: Wait for Apache to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8888/ > /dev/null 2>&1; then
+              echo "Apache is ready"
+              break
+            fi
+            echo "Waiting for Apache... ($i/30)"
+            sleep 1
+          done
+
+      - name: Run integration tests
+        run: |
+          ./test.sh http://localhost:8888 \
+            --mpm=${{ matrix.mpm }} \
+            --container=coraza-apache-${{ matrix.mpm }}
+
+      - name: Extract module artifact
+        if: matrix.mpm == 'event'
+        run: |
+          docker cp \
+            coraza-apache-${{ matrix.mpm }}:/usr/local/apache2/modules/mod_coraza.so \
+            mod_coraza.so
+
+      - name: Stop container
+        if: always()
+        run: docker stop coraza-apache-${{ matrix.mpm }} || true
+
+      - name: Upload module artifact
+        if: matrix.mpm == 'event'
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: mod_coraza-linux-amd64
+          path: mod_coraza.so
