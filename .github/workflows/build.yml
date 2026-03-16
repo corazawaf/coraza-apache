@@ -1,12 +1,17 @@
 name: Build and Test
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   build:
+    permissions:
+      contents: read
     name: Build and test (${{ matrix.mpm }} MPM)
     runs-on: ubuntu-24.04
     env:
