@@ -8,7 +8,7 @@ permissions:
 jobs:
   build:
     name: Build and test (${{ matrix.mpm }} MPM)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     env:
       # renovate: datasource=github-releases depName=corazawaf/libcoraza
       LIBCORAZA_VERSION: v1.1.0
