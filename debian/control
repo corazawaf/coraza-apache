@@ -1,0 +1,19 @@
+Source: libapache2-mod-coraza
+Section: httpd
+Priority: optional
+Maintainer: Pierre Pomes <pierre.pomes@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               apache2-dev,
+               libcoraza-dev
+Standards-Version: 4.7.0
+Homepage: https://github.com/corazawaf/coraza-apache
+Rules-Requires-Root: no
+
+Package: libapache2-mod-coraza
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}, libcoraza1
+Description: Coraza WAF module for Apache HTTPD
+ Coraza is an open-source Web Application Firewall (WAF) engine.
+ This module integrates the Coraza WAF with the Apache HTTP Server,
+ providing request inspection and blocking capabilities using
+ OWASP Core Rule Set (CRS) v4 compatible rules.
