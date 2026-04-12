@@ -8,7 +8,7 @@ Same dependency chain as coraza-nginx: coraza (Go) -> libcoraza (C bindings) -> 
 
 ## Build
 
-Requires libcoraza headers at compile time and the shared library at runtime.
+Requires libcoraza >= 1.4.0 headers at compile time and the shared library at runtime.
 The module is not linked against libcoraza -- it loads it via dlopen()
 after fork to avoid Go runtime deadlocks.
 
