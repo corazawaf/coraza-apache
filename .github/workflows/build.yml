@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       # renovate: datasource=github-releases depName=corazawaf/libcoraza
-      LIBCORAZA_VERSION: v1.1.0
+      LIBCORAZA_VERSION: v1.4.0
     strategy:
       matrix:
         mpm: [event, prefork]

@@ -11,7 +11,7 @@ RUN set -eux; \
         bash \
         make
 
-ARG LIBCORAZA_VERSION=v1.1.0
+ARG LIBCORAZA_VERSION=v1.4.0
 
 RUN set -eux; \
     wget https://github.com/corazawaf/libcoraza/tarball/${LIBCORAZA_VERSION} -O /tmp/libcoraza.tar.gz; \
@@ -265,15 +265,15 @@ RUN { \
     echo '# --- auditlog action with RelevantOnly ---'; \
     echo '<Location "/auditlog-relevant">'; \
     echo '    SecAuditEngine RelevantOnly'; \
-    echo '    SecAuditLogRelevantStatus ".*"'; \
+    echo '    SecAuditLogRelevantStatus "^(?:5|4[0-9][0-35-9])"'; \
     echo '    SecAuditLogParts ABHZ'; \
     echo '    SecAuditLogType Serial'; \
     echo '    SecAuditLog /var/log/coraza/audit/relevant.log'; \
-    echo '    SecRule ARGS:trigger "@streq yes" "id:31010,phase:1,pass,auditlog"'; \
+    echo '    SecRule ARGS:trigger "@streq yes" "id:31010,phase:1,deny,status:403,auditlog"'; \
     echo '</Location>'; \
     echo '<Location "/auditlog-relevant-nolog">'; \
     echo '    SecAuditEngine RelevantOnly'; \
-    echo '    SecAuditLogRelevantStatus ".*"'; \
+    echo '    SecAuditLogRelevantStatus "^(?:5|4[0-9][0-35-9])"'; \
     echo '    SecAuditLogParts ABHZ'; \
     echo '    SecAuditLogType Serial'; \
     echo '    SecAuditLog /var/log/coraza/audit/relevant-nolog.log'; \

@@ -44,6 +44,7 @@ typedef int                  (*fn_coraza_process_response_headers)(coraza_transa
 typedef int                  (*fn_coraza_process_logging)(coraza_transaction_t);
 typedef int                  (*fn_coraza_update_status_code)(coraza_transaction_t, int);
 typedef int                  (*fn_coraza_add_get_args)(coraza_transaction_t, char *, char *);
+typedef int                  (*fn_coraza_is_response_body_processable)(coraza_transaction_t);
 
 /* ------------------------------------------------------------------ */
 /* Static function pointers -- set once by coraza_dl_open()            */
@@ -76,6 +77,7 @@ static fn_coraza_process_response_headers dl_process_response_headers;
 static fn_coraza_process_logging         dl_process_logging;
 static fn_coraza_update_status_code      dl_update_status_code;
 static fn_coraza_add_get_args            dl_add_get_args;
+static fn_coraza_is_response_body_processable dl_is_response_body_processable;
 
 static dynlib_t dl_handle;
 
@@ -143,6 +145,8 @@ coraza_dl_open(server_rec *s)
     DL_SYM(dl_process_logging,          coraza_process_logging);
     DL_SYM(dl_update_status_code,       coraza_update_status_code);
     DL_SYM(dl_add_get_args,             coraza_add_get_args);
+    DL_SYM(dl_is_response_body_processable,
+           coraza_is_response_body_processable);
 
     ap_log_error(APLOG_MARK, APLOG_NOTICE, 0, s,
                  "coraza: %s loaded via dynlib_open",
@@ -315,4 +319,9 @@ int coraza_add_get_args(coraza_transaction_t t, char *name,
                         char *value)
 {
     return dl_add_get_args(t, name, value);
+}
+
+int coraza_is_response_body_processable(coraza_transaction_t t)
+{
+    return dl_is_response_body_processable(t);
 }
