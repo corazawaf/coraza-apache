@@ -82,6 +82,7 @@ typedef struct {
     int phase4_done;               /* response body processed */
     int logged;                    /* audit log already emitted (prevents double-log) */
     int intervention_triggered;    /* WAF denied the request */
+    int response_body_processable; /* body inspection needed for this tx */
 } coraza_request_ctx_t;
 
 

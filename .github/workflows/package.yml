@@ -15,7 +15,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       # renovate: datasource=github-releases depName=corazawaf/libcoraza
-      LIBCORAZA_VERSION: v1.1.0
+      LIBCORAZA_VERSION: v1.4.0
     strategy:
       matrix:
         arch: [amd64, arm64]

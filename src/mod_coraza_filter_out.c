@@ -94,6 +94,9 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
         coraza_process_response_headers(ctx->transaction, status,
                                         (char *)http_response_ver);
 
+        ctx->response_body_processable =
+            coraza_is_response_body_processable(ctx->transaction);
+
         ret = coraza_process_intervention(ctx->transaction, r, 0);
         if (ret > 0) {
             /* Phase 3 intervention: no data sent yet, generate clean error */
@@ -141,7 +144,7 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             return rv;
         }
 
-        if (len > 0) {
+        if (len > 0 && ctx->response_body_processable) {
             coraza_append_response_body(ctx->transaction,
                                         (unsigned char *)data, (int)len);
 
