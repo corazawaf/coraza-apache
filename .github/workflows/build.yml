@@ -55,6 +55,19 @@ jobs:
             --mpm=${{ matrix.mpm }} \
             --container=coraza-apache-${{ matrix.mpm }}
 
+      - name: Install go-ftw
+        run: go install github.com/coreruleset/go-ftw@latest
+
+      - name: Run go-ftw tests
+        run: |
+          cat > /tmp/.ftw.yaml <<'EOF'
+          testoverride:
+            input:
+              dest_addr: "127.0.0.1"
+              port: 8888
+          EOF
+          ~/go/bin/go-ftw run --cloud --config /tmp/.ftw.yaml -d tests/ftw/
+
       - name: Extract module artifact
         if: matrix.mpm == 'event'
         run: |
