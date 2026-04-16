@@ -58,7 +58,7 @@ jobs:
       - name: Install go-ftw
         run: |
           # renovate: depName=coreruleset/go-ftw datasource=github-releases
-          go install github.com/coreruleset/go-ftw@v2.1.0
+          go install github.com/coreruleset/go-ftw/v2@v2.1.0
 
       - name: Run go-ftw tests
         run: |
