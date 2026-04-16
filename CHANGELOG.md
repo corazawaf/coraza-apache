@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/corazawaf/coraza-apache/compare/v0.2.0...v0.3.0) (2026-04-16)
+
+
+### Features
+
+* add go-ftw e2e tests ([2e9d11e](https://github.com/corazawaf/coraza-apache/commit/2e9d11e7be787c4a2f41896f3192236c80672296))
+* add go-ftw e2e tests ([15dfe02](https://github.com/corazawaf/coraza-apache/commit/15dfe02384e303754e899df11f02e1d0f4bfa9d6))
+
+
+### Bug Fixes
+
+* pin go-ftw version with renovatebot hint ([4bfee26](https://github.com/corazawaf/coraza-apache/commit/4bfee2650d748196a3d48b1a8462714e34e843ba))
+* use v2 module path for go-ftw install ([748c09d](https://github.com/corazawaf/coraza-apache/commit/748c09dc81bbd1cac5bb7c5c2163ccbde9601867))
+
 ## [0.2.0](https://github.com/corazawaf/coraza-apache/compare/v0.1.0...v0.2.0) (2026-04-13)
 
 
