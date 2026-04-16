@@ -56,7 +56,9 @@ jobs:
             --container=coraza-apache-${{ matrix.mpm }}
 
       - name: Install go-ftw
-        run: go install github.com/coreruleset/go-ftw@latest
+        run: |
+          # renovate: depName=coreruleset/go-ftw datasource=github-releases
+          go install github.com/coreruleset/go-ftw@v2.1.0
 
       - name: Run go-ftw tests
         run: |
