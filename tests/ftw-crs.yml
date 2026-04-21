@@ -1,0 +1,13 @@
+testoverride:
+  input:
+    dest_addr: "127.0.0.1"
+    port: 8888
+  ignore:
+    # Imported from coraza upstream testing + Apache-specific
+    920100-4: 'Invalid uri, coraza not reached'
+    920100-5: 'Invalid uri, coraza not reached'
+    920620-1: 'To be investigated'
+    920640-4: 'To be investigated'
+    921250-1: 'Expected to match $Version in cookies, failing also in upstream'
+    921250-2: 'Expected to match $Version in cookies, failing also in upstream'
+    933120-2: 'To be investigated: match_regex value might be ModSec specific'
