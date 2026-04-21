@@ -70,6 +70,14 @@ jobs:
           EOF
           ~/go/bin/go-ftw run --cloud --config /tmp/.ftw.yaml -d tests/ftw/
 
+      - name: Run CRS regression tests
+        run: |
+          # renovate: datasource=github-releases depName=coreruleset/coreruleset
+          CRS_VERSION="4.25.0"
+          curl -fSL "https://github.com/coreruleset/coreruleset/archive/refs/tags/v${CRS_VERSION}.tar.gz" -o /tmp/crs.tar.gz
+          tar -xzf /tmp/crs.tar.gz -C /tmp
+          ~/go/bin/go-ftw run --cloud --config tests/ftw-crs.yml -d /tmp/coreruleset-${CRS_VERSION}/tests/regression/tests/
+
       - name: Extract module artifact
         if: matrix.mpm == 'event'
         run: |
