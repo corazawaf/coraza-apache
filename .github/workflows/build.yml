@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       # renovate: datasource=github-releases depName=corazawaf/libcoraza
-      LIBCORAZA_VERSION: v1.1.0
+      LIBCORAZA_VERSION: v1.4.0
     strategy:
       matrix:
         mpm: [event, prefork]
@@ -54,6 +54,29 @@ jobs:
           ./test.sh http://localhost:8888 \
             --mpm=${{ matrix.mpm }} \
             --container=coraza-apache-${{ matrix.mpm }}
+
+      - name: Install go-ftw
+        run: |
+          # renovate: depName=coreruleset/go-ftw datasource=github-releases
+          go install github.com/coreruleset/go-ftw/v2@v2.1.0
+
+      - name: Run go-ftw tests
+        run: |
+          cat > /tmp/.ftw.yaml <<'EOF'
+          testoverride:
+            input:
+              dest_addr: "127.0.0.1"
+              port: 8888
+          EOF
+          ~/go/bin/go-ftw run --cloud --config /tmp/.ftw.yaml -d tests/ftw/
+
+      - name: Run CRS regression tests
+        run: |
+          # renovate: datasource=github-releases depName=coreruleset/coreruleset
+          CRS_VERSION="4.25.0"
+          curl -fSL "https://github.com/coreruleset/coreruleset/archive/refs/tags/v${CRS_VERSION}.tar.gz" -o /tmp/crs.tar.gz
+          tar -xzf /tmp/crs.tar.gz -C /tmp
+          ~/go/bin/go-ftw run --cloud --config tests/ftw-crs.yml -d /tmp/coreruleset-${CRS_VERSION}/tests/regression/tests/
 
       - name: Extract module artifact
         if: matrix.mpm == 'event'
