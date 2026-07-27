@@ -216,6 +216,59 @@ check_vhost() {
     fi
 }
 
+# Assert a response header's value, or -- with a trailing "!" -- its absence.
+# Unlike check_redirect this reads the raw header block, so a value smuggled in
+# via an injected CRLF surfaces as its own header line and can be caught by the
+# absence form (used by the Location control-byte sanitisation tests).
+check_header() {
+    desc="$1"
+    url="$2"
+    header="$3"
+    expected="$4"
+    negate="$5"
+
+    value=$(curl -s -o /dev/null -D - "$url" \
+        | grep -i "^${header}:" | head -1 | sed "s/^[^:]*:[ ]*//" | tr -d '\r')
+
+    ok=false
+    if [ "$negate" = "!" ]; then
+        [ -z "$value" ] && ok=true
+    else
+        [ "$value" = "$expected" ] && ok=true
+    fi
+
+    if $ok; then
+        printf "  PASS  %s -> %s: %s\n" "$desc" "$header" "$value"
+        PASS=$((PASS + 1))
+    else
+        if [ "$negate" = "!" ]; then
+            reason="unexpected ${header}: '${value}'"
+        else
+            reason="${header}: '${value}' != '${expected}'"
+        fi
+        printf "  FAIL  %s (%s)\n" "$desc" "$reason"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+# HEAD request: assert status within a timeout. Doubles as a hang guard --
+# header delay must be skipped for header-only responses (no body, no EOS),
+# so a HEAD must return promptly rather than block waiting for phase 4.
+check_head() {
+    desc="$1"
+    url="$2"
+    expected="$3"
+
+    code=$(curl -s -o /dev/null -I --max-time 10 -w "%{http_code}" "$url")
+    if [ "$code" = "$expected" ]; then
+        printf "  PASS  %s -> %s\n" "$desc" "$code"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> %s (expected %s)\n" "$desc" "$code" "$expected"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 echo "Coraza WAF test suite"
 echo "Target: $URL"
 
@@ -406,6 +459,15 @@ check_redirect "302 redirect: status + Location"  "$URL/redirect-302?target=redi
 check_redirect "301 redirect: status + Location"  "$URL/redirect-301?target=redirect"  301 "http://www.coraza.io"
 check "302 redirect: clean passes"                 "$URL/redirect-302?target=safe"      200
 check "301 redirect: clean passes"                 "$URL/redirect-301?target=safe"      200
+echo ""
+
+echo "--- Response header guards ---"
+# Regression guards for the response-header hardening series (#72/#77):
+#   - HEAD must not be held waiting for phase 4 (no body/EOS) -- returns promptly.
+#   - A clean redirect emits exactly the intended Location, nothing smuggled.
+check_head   "HEAD /: not delayed, returns 200"          "$URL/"                              200
+check_header "Redirect: Location is exactly the target"  "$URL/redirect-302?target=redirect"  "Location" "http://www.coraza.io"
+check_header "Clean response: no smuggled Set-Cookie"    "$URL/"                              "Set-Cookie" "" "!"
 echo ""
 
 echo "--- VirtualHost isolation tests ---"
