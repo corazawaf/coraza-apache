@@ -216,6 +216,24 @@ check_vhost() {
     fi
 }
 
+# Like check, but forwards extra curl args (e.g. --http1.0) so a test can
+# control the request line. desc/url/expected first; remaining args go to curl.
+check_curl() {
+    desc="$1"
+    url="$2"
+    expected="$3"
+    shift 3
+
+    code=$(curl -s -o /dev/null -w "%{http_code}" "$@" "$url")
+    if [ "$code" = "$expected" ]; then
+        printf "  PASS  %s -> %s\n" "$desc" "$code"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> %s (expected %s)\n" "$desc" "$code" "$expected"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 echo "Coraza WAF test suite"
 echo "Target: $URL"
 
@@ -330,6 +348,12 @@ check "Phase 1: deny on ARGS"         "$URL/phase1?action=block403"             
 check "Phase 1: pass clean"           "$URL/phase1?action=safe"                   200
 check_post "Phase 2: deny on body"    "$URL/phase2" "PHASE2ATTACK"                403
 check_post "Phase 2: pass clean"      "$URL/phase2" "cleandata"                   200
+echo ""
+
+echo "--- Request protocol tests ---"
+# REQUEST_PROTOCOL must reach Coraza slash-delimited ("HTTP/1.1"), not bare "1.1".
+check_curl "Protocol: HTTP/1.1 matches REQUEST_PROTOCOL" "$URL/protocol-check" 403
+check_curl "Protocol: HTTP/1.0 does not match"           "$URL/protocol-check" 200 --http1.0
 echo ""
 
 echo "--- Response phase tests (3+4) ---"

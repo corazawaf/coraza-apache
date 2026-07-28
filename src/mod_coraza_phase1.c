@@ -81,21 +81,24 @@ coraza_post_read_request(request_rec *r)
     {
         const char *http_version;
 
+        /* Coraza expects the protocol in slash-delimited form (e.g. "HTTP/1.1"),
+         * matching REQUEST_PROTOCOL; passing a bare "1.1" makes protocol rules
+         * miss. */
         switch (r->proto_num) {
         case HTTP_VERSION(0, 9):
-            http_version = "0.9";
+            http_version = "HTTP/0.9";
             break;
         case HTTP_VERSION(1, 0):
-            http_version = "1.0";
+            http_version = "HTTP/1.0";
             break;
         case HTTP_VERSION(1, 1):
-            http_version = "1.1";
+            http_version = "HTTP/1.1";
             break;
         case HTTP_VERSION(2, 0):
-            http_version = "2.0";
+            http_version = "HTTP/2.0";
             break;
         default:
-            http_version = "1.1";
+            http_version = "HTTP/1.1";
             break;
         }
 
