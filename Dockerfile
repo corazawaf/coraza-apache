@@ -168,6 +168,10 @@ RUN { \
     echo '<Location "/phase2">'; \
     echo '    SecRule REQUEST_BODY "@contains PHASE2ATTACK" "id:20002,phase:2,deny,status:403,log"'; \
     echo '</Location>'; \
+    echo '# --- Request protocol (slash-delimited REQUEST_PROTOCOL) ---'; \
+    echo '<Location "/protocol-check">'; \
+    echo '    SecRule REQUEST_PROTOCOL "@streq HTTP/1.1" "id:20800,phase:1,deny,status:403,log"'; \
+    echo '</Location>'; \
     echo '# --- Config merging ---'; \
     echo '<Location "/merge-engine-off">'; \
     echo '    SecRuleEngine Off'; \
