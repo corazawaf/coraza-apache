@@ -217,9 +217,12 @@ check_vhost() {
 }
 
 # Assert a response header's value, or -- with a trailing "!" -- its absence.
-# Unlike check_redirect this reads the raw header block, so a value smuggled in
-# via an injected CRLF surfaces as its own header line and can be caught by the
-# absence form (used by the Location control-byte sanitisation tests).
+# Reads the raw header block, so a value smuggled in via an injected CRLF
+# surfaces as its own header line and is caught: a positive assertion requires
+# exactly one matching line (a duplicate fails it), and the absence form
+# requires zero. The request is bounded and a curl failure is a test failure,
+# not a silent "absent". Only trailing CR is stripped, and the raw value is not
+# printed for absence failures (avoids leaking e.g. Set-Cookie into CI logs).
 check_header() {
     desc="$1"
     url="$2"
@@ -227,22 +230,32 @@ check_header() {
     expected="$4"
     negate="$5"
 
-    value=$(curl -s -o /dev/null -D - "$url" \
-        | grep -i "^${header}:" | head -1 | sed "s/^[^:]*:[ ]*//" | tr -d '\r')
+    hdrs=$(curl -s -o /dev/null -D - --max-time 10 "$url")
+    rv=$?
+
+    count=$(printf '%s\n' "$hdrs" | grep -ic "^${header}:")
+    value=$(printf '%s\n' "$hdrs" | grep -i "^${header}:" | head -1 \
+        | sed 's/\r$//' | sed "s/^[^:]*:[ ]*//")
 
     ok=false
-    if [ "$negate" = "!" ]; then
-        [ -z "$value" ] && ok=true
+    if [ "$rv" -ne 0 ]; then
+        :   # request failed -> not ok
+    elif [ "$negate" = "!" ]; then
+        [ "$count" -eq 0 ] && ok=true
     else
-        [ "$value" = "$expected" ] && ok=true
+        [ "$count" -eq 1 ] && [ "$value" = "$expected" ] && ok=true
     fi
 
     if $ok; then
-        printf "  PASS  %s -> %s: %s\n" "$desc" "$header" "$value"
+        printf "  PASS  %s -> %s\n" "$desc" "$header"
         PASS=$((PASS + 1))
     else
-        if [ "$negate" = "!" ]; then
-            reason="unexpected ${header}: '${value}'"
+        if [ "$rv" -ne 0 ]; then
+            reason="request failed (curl exit $rv)"
+        elif [ "$negate" = "!" ]; then
+            reason="unexpected ${header} present (x${count})"
+        elif [ "$count" -ne 1 ]; then
+            reason="${header} matched x${count}, expected exactly 1"
         else
             reason="${header}: '${value}' != '${expected}'"
         fi
