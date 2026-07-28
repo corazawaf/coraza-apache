@@ -6,9 +6,22 @@ Apache HTTPD module for the Coraza WAF engine, using libcoraza (C bindings).
 
 Same dependency chain as coraza-nginx: coraza (Go) -> libcoraza (C bindings) -> this module.
 
+## Install from PPA (Ubuntu)
+
+Prebuilt packages are available from a Launchpad PPA:
+https://launchpad.net/~pierrepomes/+archive/ubuntu/coraza-apache
+
+```shell
+sudo add-apt-repository ppa:pierrepomes/coraza-apache
+sudo apt update
+sudo apt install libapache2-mod-coraza
+```
+
+This pulls in libcoraza automatically. Built for Ubuntu 22.04 (jammy), 24.04 (noble), 25.10 (questing), 26.04 (resolute) and 26.10 (stonking).
+
 ## Build
 
-Requires libcoraza headers at compile time and the shared library at runtime.
+Requires libcoraza >= 1.4.0 headers at compile time and the shared library at runtime.
 The module is not linked against libcoraza -- it loads it via dlopen()
 after fork to avoid Go runtime deadlocks.
 

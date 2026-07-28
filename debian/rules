@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@ --with apache2
+
+override_dh_auto_build:
+	make
+
+override_dh_auto_install:
+	install -d debian/libapache2-mod-coraza/usr/lib/apache2/modules
+	install -m 644 src/.libs/mod_coraza.so debian/libapache2-mod-coraza/usr/lib/apache2/modules/
+
+override_dh_auto_test:
+
+override_dh_auto_clean:
+	make clean || true
+	rm -f test

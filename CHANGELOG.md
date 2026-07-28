@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.3.0](https://github.com/corazawaf/coraza-apache/compare/v0.2.0...v0.3.0) (2026-04-16)
+
+
+### Features
+
+* add go-ftw e2e tests ([2e9d11e](https://github.com/corazawaf/coraza-apache/commit/2e9d11e7be787c4a2f41896f3192236c80672296))
+* add go-ftw e2e tests ([15dfe02](https://github.com/corazawaf/coraza-apache/commit/15dfe02384e303754e899df11f02e1d0f4bfa9d6))
+
+
+### Bug Fixes
+
+* pin go-ftw version with renovatebot hint ([4bfee26](https://github.com/corazawaf/coraza-apache/commit/4bfee2650d748196a3d48b1a8462714e34e843ba))
+* use v2 module path for go-ftw install ([748c09d](https://github.com/corazawaf/coraza-apache/commit/748c09dc81bbd1cac5bb7c5c2163ccbde9601867))
+
+## [0.2.0](https://github.com/corazawaf/coraza-apache/compare/v0.1.0...v0.2.0) (2026-04-13)
+
+
+### Features
+
+* skip response body FFI when body inspection is disabled ([d838a8c](https://github.com/corazawaf/coraza-apache/commit/d838a8c92d6f0dc5a2bb1b0cb2cede7aa12135d0))
+* skip response body FFI when body inspection is disabled ([5b21198](https://github.com/corazawaf/coraza-apache/commit/5b2119841ad205a37a31c66f473c41663c71de2d))
+
+
+### Bug Fixes
+
+* bump default LIBCORAZA_VERSION to v1.4.0 in Dockerfile ([bf58668](https://github.com/corazawaf/coraza-apache/commit/bf5866807aaff66a4558446beba70d203cc84289))
+* update audit log tests for coraza engine v3.6.0+ semantics ([f9ffc4e](https://github.com/corazawaf/coraza-apache/commit/f9ffc4e72ac57e4a594f7daafc9c1f03452e1995)), closes [#9](https://github.com/corazawaf/coraza-apache/issues/9)
+
+## [0.1.0](https://github.com/corazawaf/coraza-apache/compare/v0.0.1...v0.1.0) (2026-03-19)
+
+
+### Features
+
+* add Debian packaging ([bb0659a](https://github.com/corazawaf/coraza-apache/commit/bb0659a4a34093d84039c2ce376c0d87e70a7ada))
+* add Debian packaging ([72e4c9e](https://github.com/corazawaf/coraza-apache/commit/72e4c9ef02d56f6ace36fd97aecd833729ea4d00))
+
 ## 0.0.1 (2026-03-16)
 
 
