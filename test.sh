@@ -216,6 +216,72 @@ check_vhost() {
     fi
 }
 
+# Assert a response header's value, or -- with a trailing "!" -- its absence.
+# Reads the raw header block, so a value smuggled in via an injected CRLF
+# surfaces as its own header line and is caught: a positive assertion requires
+# exactly one matching line (a duplicate fails it), and the absence form
+# requires zero. The request is bounded and a curl failure is a test failure,
+# not a silent "absent". Only trailing CR is stripped, and the raw value is not
+# printed for absence failures (avoids leaking e.g. Set-Cookie into CI logs).
+check_header() {
+    desc="$1"
+    url="$2"
+    header="$3"
+    expected="$4"
+    negate="$5"
+
+    hdrs=$(curl -s -o /dev/null -D - --max-time 10 "$url")
+    rv=$?
+
+    count=$(printf '%s\n' "$hdrs" | grep -ic "^${header}:")
+    value=$(printf '%s\n' "$hdrs" | grep -i "^${header}:" | head -1 \
+        | sed 's/\r$//' | sed "s/^[^:]*:[ ]*//")
+
+    ok=false
+    if [ "$rv" -ne 0 ]; then
+        :   # request failed -> not ok
+    elif [ "$negate" = "!" ]; then
+        [ "$count" -eq 0 ] && ok=true
+    else
+        [ "$count" -eq 1 ] && [ "$value" = "$expected" ] && ok=true
+    fi
+
+    if $ok; then
+        printf "  PASS  %s -> %s\n" "$desc" "$header"
+        PASS=$((PASS + 1))
+    else
+        if [ "$rv" -ne 0 ]; then
+            reason="request failed (curl exit $rv)"
+        elif [ "$negate" = "!" ]; then
+            reason="unexpected ${header} present (x${count})"
+        elif [ "$count" -ne 1 ]; then
+            reason="${header} matched x${count}, expected exactly 1"
+        else
+            reason="${header}: '${value}' != '${expected}'"
+        fi
+        printf "  FAIL  %s (%s)\n" "$desc" "$reason"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+# HEAD request: assert status within a timeout. Doubles as a hang guard --
+# header delay must be skipped for header-only responses (no body, no EOS),
+# so a HEAD must return promptly rather than block waiting for phase 4.
+check_head() {
+    desc="$1"
+    url="$2"
+    expected="$3"
+
+    code=$(curl -s -o /dev/null -I --max-time 10 -w "%{http_code}" "$url")
+    if [ "$code" = "$expected" ]; then
+        printf "  PASS  %s -> %s\n" "$desc" "$code"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> %s (expected %s)\n" "$desc" "$code" "$expected"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 # Like check, but forwards extra curl args (e.g. --http1.0) so a test can
 # control the request line. desc/url/expected first; remaining args go to curl.
 check_curl() {
@@ -430,6 +496,15 @@ check_redirect "302 redirect: status + Location"  "$URL/redirect-302?target=redi
 check_redirect "301 redirect: status + Location"  "$URL/redirect-301?target=redirect"  301 "http://www.coraza.io"
 check "302 redirect: clean passes"                 "$URL/redirect-302?target=safe"      200
 check "301 redirect: clean passes"                 "$URL/redirect-301?target=safe"      200
+echo ""
+
+echo "--- Response header guards ---"
+# Regression guards for the response-header hardening series (#72/#77):
+#   - HEAD must not be held waiting for phase 4 (no body/EOS) -- returns promptly.
+#   - A clean redirect emits exactly the intended Location, nothing smuggled.
+check_head   "HEAD /: not delayed, returns 200"          "$URL/"                              200
+check_header "Redirect: Location is exactly the target"  "$URL/redirect-302?target=redirect"  "Location" "http://www.coraza.io"
+check_header "Clean response: no smuggled Set-Cookie"    "$URL/"                              "Set-Cookie" "" "!"
 echo ""
 
 echo "--- VirtualHost isolation tests ---"
