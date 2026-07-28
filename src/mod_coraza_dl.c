@@ -156,17 +156,23 @@ coraza_dl_open(server_rec *s)
 }
 
 /* ------------------------------------------------------------------ */
-/* Public: unload libcoraza.so                                         */
+/* Public: keep libcoraza.so loaded until the process exits            */
+/*                                                                     */
+/* libcoraza embeds a Go runtime, and a Go runtime cannot be safely    */
+/* unloaded with dlclose(): its signal handlers, GC threads and TLS    */
+/* blocks stay registered, so unloading the .so leaves dangling        */
+/* pointers and crashes on teardown.  This runs from the child-pool    */
+/* cleanup (coraza_child_exit), which fires on worker shutdown and on  */
+/* graceful restart, so we must not unload here -- leave the handle in */
+/* place and let normal process exit reclaim it.                       */
 /* ------------------------------------------------------------------ */
 
 void
 coraza_dl_close(server_rec *s)
 {
     if (dl_handle != NULL) {
-        dynlib_close(dl_handle);
-        dl_handle = NULL;
-        ap_log_error(APLOG_MARK, APLOG_NOTICE, 0, s,
-                     "coraza: %s unloaded",
+        ap_log_error(APLOG_MARK, APLOG_DEBUG, 0, s,
+                     "coraza: %s left loaded for process lifetime",
                      CORAZA_DYNLIB_BASENAME DYNLIB_EXT);
     }
 }
