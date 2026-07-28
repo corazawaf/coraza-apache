@@ -161,6 +161,10 @@ RUN { \
     echo '<Location "/redirect-301">'; \
     echo '    SecRule ARGS:target "@streq redirect" "id:20702,phase:1,status:301,log,redirect:http://www.coraza.io"'; \
     echo '</Location>'; \
+    echo '# Clean path+query target: sanitizer must pass it byte-for-byte (no over-truncation)'; \
+    echo '<Location "/redirect-clean-path">'; \
+    echo '    SecRule ARGS:target "@streq redirect" "id:20703,phase:1,status:302,log,redirect:http://example.org/clean/path?a=b"'; \
+    echo '</Location>'; \
     echo '# --- Per-phase testing ---'; \
     echo '<Location "/phase1">'; \
     echo '    SecRule ARGS:action "@streq block403" "id:20001,phase:1,deny,status:403,log"'; \

@@ -504,6 +504,7 @@ echo "--- Response header guards ---"
 #   - A clean redirect emits exactly the intended Location, nothing smuggled.
 check_head   "HEAD /: not delayed, returns 200"          "$URL/"                              200
 check_header "Redirect: Location is exactly the target"  "$URL/redirect-302?target=redirect"  "Location" "http://www.coraza.io"
+check_header "Redirect: clean path+query preserved"      "$URL/redirect-clean-path?target=redirect" "Location" "http://example.org/clean/path?a=b"
 check_header "Clean response: no smuggled Set-Cookie"    "$URL/"                              "Set-Cookie" "" "!"
 echo ""
 

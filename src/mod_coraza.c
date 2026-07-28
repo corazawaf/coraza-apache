@@ -136,7 +136,35 @@ coraza_process_intervention(coraza_transaction_t transaction,
         }
 
         if (intervention->data != NULL) {
-            apr_table_set(r->headers_out, "Location", intervention->data);
+            /*
+             * Defense-in-depth against HTTP response splitting / header
+             * injection. If a rule ever builds the redirect target from
+             * client-controlled data (macro expansion of a request variable),
+             * intervention->data could carry CR/LF or other control bytes.
+             * Truncate the Location at the first C0 control character or DEL
+             * (a legitimate URL carries none unencoded). libcoraza 1.4 does
+             * not macro-expand redirect targets today, so this future-proofs
+             * against a dynamic source at negligible cost.
+             */
+            const char *loc = intervention->data;
+            apr_size_t  len = strlen(loc);
+            apr_size_t  safe = 0;
+
+            while (safe < len &&
+                   (unsigned char)loc[safe] >= 0x20 &&
+                   (unsigned char)loc[safe] != 0x7f) {
+                safe++;
+            }
+
+            if (safe != len) {
+                ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r,
+                              "coraza: control character in redirect target; "
+                              "truncating Location to %" APR_SIZE_T_FMT
+                              " byte(s)", safe);
+                loc = apr_pstrmemdup(r->pool, loc, safe);
+            }
+
+            apr_table_set(r->headers_out, "Location", loc);
         }
 
         int status = intervention->status;
