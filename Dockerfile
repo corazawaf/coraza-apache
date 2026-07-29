@@ -115,7 +115,11 @@ RUN chmod +x /usr/local/apache2/cgi-bin/sse
 RUN { \
     echo 'LoadModule coraza_module modules/mod_coraza.so'; \
     echo 'LoadModule info_module modules/mod_info.so'; \
-    echo 'LoadModule cgid_module modules/mod_cgid.so'; \
+    if [ "$MPM" = "prefork" ]; then \
+      echo 'LoadModule cgi_module modules/mod_cgi.so'; \
+    else \
+      echo 'LoadModule cgid_module modules/mod_cgid.so'; \
+    fi; \
     echo 'Coraza On'; \
     echo 'CorazaRulesFile /etc/coraza/coraza-waf.conf'; \
     echo 'FallbackResource /index.html'; \

@@ -23,12 +23,13 @@
  * can skip the delay.
  *
  * SECURITY TRADE-OFF: Content-Type is chosen by the upstream, so an origin that
- * emits text/event-stream opts this response out of the phase-4 header delay.
- * Phase 4 still RUNS (coraza_process_response_body() is still called) and
- * phases 1-3 are untouched -- what is lost is only turning a phase-4 match into
- * a clean error page, because the headers are already on the wire; a late match
- * degrades to a connection reset. Streaming and full-response WAF buffering are
- * mutually exclusive by construction.
+ * emits text/event-stream opts this response out of response-body inspection.
+ * Phases 1-3 are untouched, but phase 4 is SKIPPED for SSE: the caller removes
+ * this filter before the body loop, so coraza_process_response_body() is not
+ * called and the streamed body is not inspected. This is inherent -- a body
+ * that never ends cannot be buffered or evaluated -- and is the same trade-off
+ * 101 Switching Protocols already accepts. Streaming and full-response WAF
+ * buffering are mutually exclusive by construction.
  *
  * The media-type match is strict: "text/event-streamx" and
  * "text/event-stream junk" do NOT qualify; only end-of-value or optional OWS

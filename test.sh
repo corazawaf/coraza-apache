@@ -309,11 +309,21 @@ check_stream() {
     pattern="$3"
     expect="$4"   # present | absent
 
-    body=$(curl -sN --max-time 4 "$url" 2>/dev/null)
+    # Capture body + final HTTP code. A streamed response yields the pattern
+    # (code 200); a delayed/buffered response sends no headers and curl times
+    # out with code 000. An actual error (4xx/5xx) is neither -- so "absent"
+    # requires the timeout (000), not merely an empty body, to avoid an HTTP
+    # error masquerading as a correctly-delayed stream.
+    out=$(curl -sN --max-time 4 -w '\n%{http_code}' "$url" 2>/dev/null)
+    code=$(printf '%s\n' "$out" | tail -1)
+    body=$(printf '%s\n' "$out" | sed '$d')
+
     if printf '%s' "$body" | grep -q "$pattern"; then
         got=present
+    elif [ "$code" = "000" ]; then
+        got=absent           # held/delayed: no headers arrived within the window
     else
-        got=absent
+        got="error(code=$code)"
     fi
 
     if [ "$got" = "$expect" ]; then
