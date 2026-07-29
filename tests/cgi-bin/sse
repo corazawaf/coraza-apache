@@ -1,0 +1,16 @@
+#!/bin/sh
+# SSE test endpoint for the header-delay skip test.
+#
+# Streams Content-Type: text/event-stream (or the value of SSE_CT, used to
+# emit a near-miss media type) and then emits events roughly once a second
+# WITHOUT ever sending end-of-stream. Each line is written by a separate
+# /usr/bin/printf process so it is flushed to Apache immediately -- shell
+# builtins would buffer and defeat the streaming the test relies on.
+/usr/bin/printf 'Content-Type: %s\r\n\r\n' "${SSE_CT:-text/event-stream}"
+
+i=0
+while [ "$i" -lt 30 ]; do
+    /usr/bin/printf 'data: tick %s\n\n' "$i"
+    i=$((i + 1))
+    sleep 1
+done

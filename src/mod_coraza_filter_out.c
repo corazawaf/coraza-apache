@@ -16,6 +16,49 @@
 #include <string.h>
 
 /*
+ * A streaming response has no meaningful end-of-body: the origin emits events
+ * indefinitely and never sends EOS, so the header delay (which flushes on EOS)
+ * would hold the response headers forever and the client receives nothing.
+ * Detect Server-Sent Events (Content-Type: text/event-stream) so the caller
+ * can skip the delay.
+ *
+ * SECURITY TRADE-OFF: Content-Type is chosen by the upstream, so an origin that
+ * emits text/event-stream opts this response out of the phase-4 header delay.
+ * Phase 4 still RUNS (coraza_process_response_body() is still called) and
+ * phases 1-3 are untouched -- what is lost is only turning a phase-4 match into
+ * a clean error page, because the headers are already on the wire; a late match
+ * degrades to a connection reset. Streaming and full-response WAF buffering are
+ * mutually exclusive by construction.
+ *
+ * The media-type match is strict: "text/event-streamx" and
+ * "text/event-stream junk" do NOT qualify; only end-of-value or optional OWS
+ * followed by ';' (a parameter list, RFC 9110 5.6.3) is accepted.
+ */
+static int
+coraza_is_sse_response(request_rec *r)
+{
+    static const char sse[] = "text/event-stream";
+    const apr_size_t sse_len = sizeof(sse) - 1;
+    const char *ct = r->content_type;
+    apr_size_t i, len;
+
+    if (ct == NULL) {
+        return 0;
+    }
+    len = strlen(ct);
+    if (len < sse_len || strncasecmp(ct, sse, sse_len) != 0) {
+        return 0;
+    }
+    for (i = sse_len; i < len; i++) {
+        if (ct[i] == ' ' || ct[i] == '\t') {
+            continue;
+        }
+        return ct[i] == ';';
+    }
+    return 1;  /* exact "text/event-stream" */
+}
+
+/*
  * Output filter: phases 3 (response headers) and 4 (response body).
  *
  * Implements header delay: buffers all output buckets in a pending brigade
@@ -106,6 +149,20 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             r->status = ret;
             ap_die(ret, r);
             return AP_FILTER_ERROR;
+        }
+
+        /*
+         * SSE / streaming responses: phases 1-3 are done. The body loop below
+         * block-reads every bucket before forwarding the brigade, which drains
+         * a streaming response pipe and holds it until EOS -- an SSE stream
+         * never sends EOS, so the client would receive nothing. Step out of the
+         * filter chain and let the response stream. Phase 4 cannot run on a body
+         * that never ends anyway; this is the same trade-off 101 Switching
+         * Protocols accepts (see coraza_is_sse_response).
+         */
+        if (coraza_is_sse_response(r)) {
+            ap_remove_output_filter(f);
+            return ap_pass_brigade(f->next, bb);
         }
 
         /* Begin header delay — skip for HEAD (no body), subrequests (internal),

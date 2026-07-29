@@ -300,6 +300,31 @@ check_curl() {
     fi
 }
 
+# Fetch a streaming endpoint with a short timeout and assert whether a pattern
+# arrived. "present" = the stream reached the client (header delay was skipped);
+# "absent" = nothing streamed within the window (still buffered/delayed).
+check_stream() {
+    desc="$1"
+    url="$2"
+    pattern="$3"
+    expect="$4"   # present | absent
+
+    body=$(curl -sN --max-time 4 "$url" 2>/dev/null)
+    if printf '%s' "$body" | grep -q "$pattern"; then
+        got=present
+    else
+        got=absent
+    fi
+
+    if [ "$got" = "$expect" ]; then
+        printf "  PASS  %s -> %s\n" "$desc" "$got"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> %s (expected %s)\n" "$desc" "$got" "$expect"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 echo "Coraza WAF test suite"
 echo "Target: $URL"
 
@@ -427,6 +452,15 @@ check "Phase 3: deny on Content-Type"       "$URL/phase3"                       
 check "Phase 3: pass no match"              "$URL/phase3-pass"                     200
 check "Phase 4: deny on body content"       "$URL/phase4"                          403
 check "Phase 4: pass no match"              "$URL/phase4-pass"                     200
+echo ""
+
+echo "--- SSE streaming (header-delay skip) ---"
+# text/event-stream never sends EOS; the header delay must be skipped or the
+# client receives nothing. Near-miss media types must stay delayed, and a
+# phase-1 rule must still block (the exemption must not become a WAF bypass).
+check_stream "SSE: stream reaches client (not delayed)"   "$URL/sse-stream"          "data: tick" present
+check_stream "SSE near-miss: text/event-streamx delayed"  "$URL/sse-nearmiss"        "data: tick" absent
+check_curl   "SSE: phase-1 rule still blocks (no bypass)" "$URL/sse-stream?attack=1" 403 --max-time 5
 echo ""
 
 echo "--- Config merging tests ---"
