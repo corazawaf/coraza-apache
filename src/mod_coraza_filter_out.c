@@ -220,6 +220,11 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                               APR_SIZE_T_FMT " bytes; flushing headers early",
                               (apr_size_t) CORAZA_MAX_DELAYED_BODY);
                 ctx->headers_delayed = 0;
+                /* Step out of the chain so the remainder truly streams through
+                 * uninspected -- otherwise the body loop keeps inspecting later
+                 * chunks and a post-flush intervention would drop an in-flight
+                 * brigade, truncating a response the client is already reading. */
+                ap_remove_output_filter(f);
                 APR_BRIGADE_PREPEND(bb, ctx->pending_brigade);
                 ctx->pending_brigade = NULL;
                 return ap_pass_brigade(f->next, bb);
