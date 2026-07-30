@@ -107,10 +107,19 @@ RUN mkdir -p /var/log/coraza && \
 # Copy WAF rules config
 COPY coraza-waf.conf /etc/coraza/coraza-waf.conf
 
+# SSE test endpoint (streaming CGI) for the header-delay skip test
+COPY tests/cgi-bin/sse /usr/local/apache2/cgi-bin/sse
+RUN chmod +x /usr/local/apache2/cgi-bin/sse
+
 # Apache config: load module, enable coraza with CRS, FallbackResource for test URLs
 RUN { \
     echo 'LoadModule coraza_module modules/mod_coraza.so'; \
     echo 'LoadModule info_module modules/mod_info.so'; \
+    if [ "$MPM" = "prefork" ]; then \
+      echo 'LoadModule cgi_module modules/mod_cgi.so'; \
+    else \
+      echo 'LoadModule cgid_module modules/mod_cgid.so'; \
+    fi; \
     echo 'Coraza On'; \
     echo 'CorazaRulesFile /etc/coraza/coraza-waf.conf'; \
     echo 'FallbackResource /index.html'; \
@@ -175,6 +184,20 @@ RUN { \
     echo '# --- Request protocol (slash-delimited REQUEST_PROTOCOL) ---'; \
     echo '<Location "/protocol-check">'; \
     echo '    SecRule REQUEST_PROTOCOL "@streq HTTP/1.1" "id:20800,phase:1,deny,status:403,log"'; \
+    echo '</Location>'; \
+    echo '# --- SSE streaming: header delay must be skipped (never sends EOS) ---'; \
+    echo 'ScriptAlias "/sse-stream" "/usr/local/apache2/cgi-bin/sse"'; \
+    echo 'ScriptAlias "/sse-nearmiss" "/usr/local/apache2/cgi-bin/sse"'; \
+    echo '<Directory "/usr/local/apache2/cgi-bin">'; \
+    echo '    Require all granted'; \
+    echo '    Options +ExecCGI'; \
+    echo '</Directory>'; \
+    echo '<Location "/sse-stream">'; \
+    echo '    SetEnv SSE_CT "text/event-stream"'; \
+    echo '    SecRule ARGS:attack "@streq 1" "id:20810,phase:1,deny,status:403,log"'; \
+    echo '</Location>'; \
+    echo '<Location "/sse-nearmiss">'; \
+    echo '    SetEnv SSE_CT "text/event-streamx"'; \
     echo '</Location>'; \
     echo '# --- Config merging ---'; \
     echo '<Location "/merge-engine-off">'; \
