@@ -1,0 +1,16 @@
+#!/bin/sh
+# Emits a large application/octet-stream body in paced chunks, sending EOS only
+# when it finishes. The short sleep between chunks makes Apache deliver several
+# separate output-filter brigades before EOS -- without pacing the CGI writes
+# fast enough that mod_cgid hands the whole body + EOS to the filter at once,
+# which reaches the has-EOS path before the not-last-buffer cap can trip.
+#
+# Total: 16 * 256 KiB = 4 MiB, comfortably over the 1 MiB cap.
+/usr/bin/printf 'Content-Type: application/octet-stream\r\n\r\n'
+
+i=0
+while [ "$i" -lt 16 ]; do
+    dd if=/dev/zero bs=262144 count=1 2>/dev/null | tr '\0' 'A'
+    i=$((i + 1))
+    sleep 0.2
+done

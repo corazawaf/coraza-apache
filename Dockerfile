@@ -110,6 +110,8 @@ COPY coraza-waf.conf /etc/coraza/coraza-waf.conf
 # SSE test endpoint (streaming CGI) for the header-delay skip test
 COPY tests/cgi-bin/sse /usr/local/apache2/cgi-bin/sse
 RUN chmod +x /usr/local/apache2/cgi-bin/sse
+COPY tests/cgi-bin/bulk /usr/local/apache2/cgi-bin/bulk
+RUN chmod +x /usr/local/apache2/cgi-bin/bulk
 
 # Apache config: load module, enable coraza with CRS, FallbackResource for test URLs
 RUN { \
@@ -188,6 +190,7 @@ RUN { \
     echo '# --- SSE streaming: header delay must be skipped (never sends EOS) ---'; \
     echo 'ScriptAlias "/sse-stream" "/usr/local/apache2/cgi-bin/sse"'; \
     echo 'ScriptAlias "/sse-nearmiss" "/usr/local/apache2/cgi-bin/sse"'; \
+    echo 'ScriptAlias "/bulk-delayed" "/usr/local/apache2/cgi-bin/bulk"'; \
     echo '<Directory "/usr/local/apache2/cgi-bin">'; \
     echo '    Require all granted'; \
     echo '    Options +ExecCGI'; \
