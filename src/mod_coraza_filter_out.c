@@ -60,6 +60,32 @@ coraza_is_sse_response(request_rec *r)
 }
 
 /*
+ * Fail closed on a response-body engine error. If the headers are still delayed
+ * nothing has been sent yet, so a clean 500 error page can be generated;
+ * otherwise the headers are already on the wire and the response is truncated
+ * with a reset. Either way the response is not passed through uninspected.
+ */
+static apr_status_t
+coraza_fail_closed_response(ap_filter_t *f, request_rec *r,
+                            coraza_request_ctx_t *ctx, apr_bucket_brigade *bb)
+{
+    ctx->intervention_triggered = 1;
+    ap_remove_output_filter(f);
+    r->status = HTTP_INTERNAL_SERVER_ERROR;
+
+    if (ctx->headers_delayed) {
+        ctx->headers_delayed = 0;
+        apr_brigade_cleanup(ctx->pending_brigade);
+        apr_brigade_cleanup(bb);
+        ap_die(HTTP_INTERNAL_SERVER_ERROR, r);
+        return AP_FILTER_ERROR;
+    }
+
+    apr_brigade_cleanup(bb);
+    return APR_EGENERAL;
+}
+
+/*
  * Output filter: phases 3 (response headers) and 4 (response body).
  *
  * Implements header delay: buffers all output buckets in a pending brigade
@@ -232,8 +258,11 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
         }
 
         if (len > 0 && ctx->response_body_processable) {
-            coraza_append_response_body(ctx->transaction,
-                                        (unsigned char *)data, (int)len);
+            if (CORAZA_CALL_FAILED(coraza_append_response_body(ctx->transaction,
+                                        (unsigned char *)data, (int)len))) {
+                /* Engine error: fail closed rather than stream uninspected. */
+                return coraza_fail_closed_response(f, r, ctx, bb);
+            }
 
             ret = coraza_process_intervention(ctx->transaction, r, 0);
             if (ret > 0) {
@@ -257,7 +286,9 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
     if (has_eos) {
         /* Process complete response body */
-        coraza_process_response_body(ctx->transaction);
+        if (CORAZA_CALL_FAILED(coraza_process_response_body(ctx->transaction))) {
+            return coraza_fail_closed_response(f, r, ctx, bb);
+        }
 
         ret = coraza_process_intervention(ctx->transaction, r, 0);
         if (ret > 0) {

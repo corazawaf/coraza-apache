@@ -50,7 +50,13 @@ coraza_input_filter(ap_filter_t *f, apr_bucket_brigade *bb,
 
         if (APR_BUCKET_IS_EOS(b)) {
             /* End of request body -- process it */
-            coraza_process_request_body(ctx->transaction);
+            if (CORAZA_CALL_FAILED(coraza_process_request_body(ctx->transaction))) {
+                /* Engine error: fail closed rather than pass uninspected. */
+                ctx->intervention_triggered = 1;
+                ctx->phase2_done = 1;
+                ap_remove_input_filter(f);
+                return APR_EGENERAL;
+            }
 
             ret = coraza_process_intervention(ctx->transaction, f->r, 0);
             if (ret > 0) {
@@ -77,8 +83,13 @@ coraza_input_filter(ap_filter_t *f, apr_bucket_brigade *bb,
         }
 
         if (len > 0) {
-            coraza_append_request_body(ctx->transaction,
-                                       (unsigned char *)data, (int)len);
+            if (CORAZA_CALL_FAILED(coraza_append_request_body(ctx->transaction,
+                                       (unsigned char *)data, (int)len))) {
+                ctx->intervention_triggered = 1;
+                ctx->phase2_done = 1;
+                ap_remove_input_filter(f);
+                return APR_EGENERAL;
+            }
 
             /* Check for stream intervention */
             ret = coraza_process_intervention(ctx->transaction, f->r, 0);
