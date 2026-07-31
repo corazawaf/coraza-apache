@@ -202,6 +202,35 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             return rv;
         }
 
+        /*
+         * Bound worker memory while the header delay holds the response. The
+         * loop reads (and thus buffers) every bucket before forwarding; a large
+         * download or a long stream would otherwise be read into memory in full
+         * before EOS. Once the buffered body passes the cap, stop delaying:
+         * flush the buffered headers + everything read so far and let the rest
+         * stream through uninspected. A later phase-4 match can then no longer
+         * render a clean error page (headers are on the wire) -- the same
+         * trade-off the SSE and 101 Switching Protocols paths accept.
+         */
+        if (ctx->headers_delayed && len > 0) {
+            ctx->pending_len += len;
+            if (ctx->pending_len > CORAZA_MAX_DELAYED_BODY) {
+                ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r,
+                              "coraza: delayed response body exceeded %"
+                              APR_SIZE_T_FMT " bytes; flushing headers early",
+                              (apr_size_t) CORAZA_MAX_DELAYED_BODY);
+                ctx->headers_delayed = 0;
+                /* Step out of the chain so the remainder truly streams through
+                 * uninspected -- otherwise the body loop keeps inspecting later
+                 * chunks and a post-flush intervention would drop an in-flight
+                 * brigade, truncating a response the client is already reading. */
+                ap_remove_output_filter(f);
+                APR_BRIGADE_PREPEND(bb, ctx->pending_brigade);
+                ctx->pending_brigade = NULL;
+                return ap_pass_brigade(f->next, bb);
+            }
+        }
+
         if (len > 0 && ctx->response_body_processable) {
             coraza_append_response_body(ctx->transaction,
                                         (unsigned char *)data, (int)len);
@@ -268,7 +297,8 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
     /* Not the last buffer yet */
     if (ctx->headers_delayed) {
-        /* Accumulate into pending brigade during header delay */
+        /* Accumulate into pending brigade during header delay. The total is
+         * bounded by the per-bucket cap check in the phase-4 loop above. */
         APR_BRIGADE_CONCAT(ctx->pending_brigade, bb);
         return APR_SUCCESS;
     }

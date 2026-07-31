@@ -72,10 +72,23 @@ typedef struct {
 } coraza_server_conf_t;
 
 
+/*
+ * Cap on how much response body is buffered while the header delay holds the
+ * response for phase-4 inspection. A large download or an open-ended stream
+ * would otherwise accumulate without limit and inflate worker memory. Once the
+ * buffered body passes this cap the headers and everything buffered so far are
+ * flushed and the remainder streams through. Overridable at build time with
+ * -DCORAZA_MAX_DELAYED_BODY=<bytes>.
+ */
+#ifndef CORAZA_MAX_DELAYED_BODY
+#define CORAZA_MAX_DELAYED_BODY (1024 * 1024)   /* 1 MiB */
+#endif
+
 /* Per-request context */
 typedef struct {
     coraza_transaction_t  transaction;
     apr_bucket_brigade   *pending_brigade;  /* buffered body for header delay */
+    apr_size_t pending_len;        /* bytes buffered while headers are delayed */
     int headers_delayed;           /* response held back pending body inspection */
     int phase2_done;               /* request body processed */
     int phase3_done;               /* response headers processed */

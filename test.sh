@@ -335,6 +335,43 @@ check_stream() {
     fi
 }
 
+# Assert the number of body bytes downloaded (e.g. a large response arrives
+# intact through the delayed-buffering cap, not truncated).
+check_size() {
+    desc="$1"
+    url="$2"
+    expected="$3"
+
+    result=$(curl -s -o /dev/null -w "%{http_code} %{size_download}" --max-time 20 "$url") || {
+        printf "  FAIL  %s -> curl failed\n" "$desc"
+        FAIL=$((FAIL + 1))
+        return
+    }
+    code=${result%% *}
+    size=${result#* }
+    if [ "$code" = "200" ] && [ "$size" = "$expected" ]; then
+        printf "  PASS  %s -> %s (%s bytes)\n" "$desc" "$code" "$size"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> %s (%s bytes, expected 200/%s)\n" "$desc" "$code" "$size" "$expected"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+# Assert a pattern appears in the container's stderr log (Apache error_log).
+check_container_log() {
+    desc="$1"
+    pattern="$2"
+
+    if docker logs "$CONTAINER" 2>&1 | grep -q "$pattern"; then
+        printf "  PASS  %s\n" "$desc"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s (pattern '%s' not in container log)\n" "$desc" "$pattern"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 echo "Coraza WAF test suite"
 echo "Target: $URL"
 
@@ -473,6 +510,13 @@ check_stream "SSE near-miss: text/event-streamx delayed"  "$URL/sse-nearmiss"   
 check_curl   "SSE: phase-1 rule still blocks (no bypass)" "$URL/sse-stream?attack=1" 403 --max-time 5
 echo ""
 
+echo "--- Delayed response cap (bound worker memory) ---"
+# A large delayed response must arrive intact: the cap flushes headers early
+# and streams the rest rather than buffering the whole body (or truncating it).
+check      "Large delayed response: completes 200"    "$URL/bulk-delayed"  200
+check_size "Large delayed response: full 4 MiB body"  "$URL/bulk-delayed"  4194304
+echo ""
+
 echo "--- Config merging tests ---"
 check "Engine off: SQLi passes"       "$URL/merge-engine-off/?id=1%20OR%201=1"    200
 check "Engine off: normal passes"     "$URL/merge-engine-off/"                    200
@@ -565,6 +609,11 @@ echo ""
 
 # Audit log tests (require --container)
 if [ -n "$CONTAINER" ]; then
+    echo "--- Delayed response cap log ---"
+    # The large delayed response above must have tripped the cap's early flush.
+    check_container_log "Cap: flushed delayed headers early"  "flushing headers early"
+    echo ""
+
     echo "--- Audit log tests ---"
     # Generate a blocked request that will appear in audit log
     clear_audit_log
