@@ -84,6 +84,15 @@ typedef struct {
 #define CORAZA_MAX_DELAYED_BODY (1024 * 1024)   /* 1 MiB */
 #endif
 
+/*
+ * Fail-closed check for the body submit/process calls. The libcoraza ABI this
+ * module targets (< 1.6) returns non-zero on an engine error and 0 on success;
+ * interruptions are reported separately via coraza_intervention(). A non-zero
+ * return therefore means inspection could not complete, and the request or
+ * response must be failed closed rather than passed through uninspected.
+ */
+#define CORAZA_CALL_FAILED(rc) ((rc) != 0)
+
 /* Per-request context */
 typedef struct {
     coraza_transaction_t  transaction;

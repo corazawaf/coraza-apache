@@ -164,8 +164,12 @@ coraza_post_read_request(request_rec *r)
         if (ap_should_client_block(r)) {
             /* ap_get_client_block: reads up to N bytes, returns count or -1 */
             while ((nread = ap_get_client_block(r, buf, sizeof(buf))) > 0) {
-                coraza_append_request_body(ctx->transaction,
-                                           (unsigned char *)buf, (int)nread);
+                if (CORAZA_CALL_FAILED(coraza_append_request_body(
+                        ctx->transaction, (unsigned char *)buf, (int)nread))) {
+                    /* Engine error: fail closed rather than skip inspection. */
+                    ctx->intervention_triggered = 1;
+                    return HTTP_INTERNAL_SERVER_ERROR;
+                }
 
                 ret = coraza_process_intervention(ctx->transaction, r, 1);
                 if (ret > 0) {
@@ -178,7 +182,10 @@ coraza_post_read_request(request_rec *r)
                 return HTTP_BAD_REQUEST;
             }
 
-            coraza_process_request_body(ctx->transaction);
+            if (CORAZA_CALL_FAILED(coraza_process_request_body(ctx->transaction))) {
+                ctx->intervention_triggered = 1;
+                return HTTP_INTERNAL_SERVER_ERROR;
+            }
             ctx->phase2_done = 1;
 
             ret = coraza_process_intervention(ctx->transaction, r, 1);
@@ -188,7 +195,10 @@ coraza_post_read_request(request_rec *r)
             }
         } else {
             /* No body to read, still finalize phase 2 */
-            coraza_process_request_body(ctx->transaction);
+            if (CORAZA_CALL_FAILED(coraza_process_request_body(ctx->transaction))) {
+                ctx->intervention_triggered = 1;
+                return HTTP_INTERNAL_SERVER_ERROR;
+            }
             ctx->phase2_done = 1;
 
             ret = coraza_process_intervention(ctx->transaction, r, 1);
