@@ -342,12 +342,18 @@ check_size() {
     url="$2"
     expected="$3"
 
-    size=$(curl -s -o /dev/null -w "%{size_download}" --max-time 20 "$url")
-    if [ "$size" = "$expected" ]; then
-        printf "  PASS  %s -> %s bytes\n" "$desc" "$size"
+    result=$(curl -s -o /dev/null -w "%{http_code} %{size_download}" --max-time 20 "$url") || {
+        printf "  FAIL  %s -> curl failed\n" "$desc"
+        FAIL=$((FAIL + 1))
+        return
+    }
+    code=${result%% *}
+    size=${result#* }
+    if [ "$code" = "200" ] && [ "$size" = "$expected" ]; then
+        printf "  PASS  %s -> %s (%s bytes)\n" "$desc" "$code" "$size"
         PASS=$((PASS + 1))
     else
-        printf "  FAIL  %s -> %s bytes (expected %s)\n" "$desc" "$size" "$expected"
+        printf "  FAIL  %s -> %s (%s bytes, expected 200/%s)\n" "$desc" "$code" "$size" "$expected"
         FAIL=$((FAIL + 1))
     fi
 }
