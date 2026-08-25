@@ -276,6 +276,19 @@ coraza_create_ctx(request_rec *r)
         ctx->transaction = coraza_new_transaction(waf);
     }
 
+    /*
+     * Validate the handle before it is stored or a cleanup is registered.
+     * A zero handle means the engine could not create the transaction; letting
+     * it through would have every later coraza_* call operate on a null handle
+     * (and register a cleanup that frees nothing). Fail closed instead -- the
+     * caller turns a NULL ctx into HTTP 500.
+     */
+    if (ctx->transaction == 0) {
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                      "coraza: failed to create transaction");
+        return NULL;
+    }
+
     ap_set_module_config(r->request_config, &coraza_module, ctx);
 
     apr_pool_cleanup_register(r->pool, ctx, coraza_cleanup_transaction,
