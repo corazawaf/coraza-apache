@@ -187,6 +187,10 @@ RUN { \
     echo '<Location "/protocol-check">'; \
     echo '    SecRule REQUEST_PROTOCOL "@streq HTTP/1.1" "id:20800,phase:1,deny,status:403,log"'; \
     echo '</Location>'; \
+    echo '# --- Large header inspection (cgo length-narrowing guard must not clip) ---'; \
+    echo '<Location "/header-check">'; \
+    echo '    SecRule REQUEST_HEADERS:X-Test "@contains BOOMHEADER" "id:20810,phase:1,deny,status:403,log"'; \
+    echo '</Location>'; \
     echo '# --- SSE streaming: header delay must be skipped (never sends EOS) ---'; \
     echo 'ScriptAlias "/sse-stream" "/usr/local/apache2/cgi-bin/sse"'; \
     echo 'ScriptAlias "/sse-nearmiss" "/usr/local/apache2/cgi-bin/sse"'; \

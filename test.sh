@@ -494,6 +494,15 @@ check_curl "Protocol: HTTP/1.1 matches REQUEST_PROTOCOL" "$URL/protocol-check" 4
 check_curl "Protocol: HTTP/1.0 does not match"           "$URL/protocol-check" 200 --http1.0
 echo ""
 
+echo "--- Large header inspection (length-narrowing guard) ---"
+# A large but legal header must still reach the engine in full: the trigger sits
+# at the very end of ~6 KB of padding, so a clipped length would miss it.
+big_hdr="$(printf 'A%.0s' $(seq 1 6000))BOOMHEADER"
+pad_hdr="$(printf 'A%.0s' $(seq 1 6000))"
+check_curl "Large header: trigger at end is inspected" "$URL/header-check" 403 -H "X-Test: $big_hdr"
+check_curl "Large header: padding only is not clipped" "$URL/header-check" 200 -H "X-Test: $pad_hdr"
+echo ""
+
 echo "--- Response phase tests (3+4) ---"
 check "Phase 3: deny on Content-Type"       "$URL/phase3"                          403
 check "Phase 3: pass no match"              "$URL/phase3-pass"                     200
