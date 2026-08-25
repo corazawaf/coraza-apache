@@ -21,6 +21,7 @@
 #include <apr_strings.h>
 #include <apr_tables.h>
 #include <apr_buckets.h>
+#include <limits.h>
 #include <util_filter.h>
 #include <coraza/coraza.h>
 

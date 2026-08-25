@@ -124,14 +124,31 @@ coraza_post_read_request(request_rec *r)
         telts = (const apr_table_entry_t *)tarr->elts;
 
         for (i = 0; i < tarr->nelts; i++) {
+            size_t name_len, val_len;
+
             if (telts[i].key == NULL) {
                 continue;
             }
+
+            /*
+             * coraza_add_request_header takes int lengths; guard the size_t ->
+             * int narrowing so an oversized header cannot wrap to a bogus
+             * length and slip past inspection. Fail closed.
+             */
+            name_len = strlen(telts[i].key);
+            val_len  = telts[i].val ? strlen(telts[i].val) : 0;
+            if (name_len > INT_MAX || val_len > INT_MAX) {
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                              "coraza: request header too long to inspect");
+                ctx->intervention_triggered = 1;
+                return HTTP_INTERNAL_SERVER_ERROR;
+            }
+
             coraza_add_request_header(ctx->transaction,
                                       (char *)telts[i].key,
-                                      (int)strlen(telts[i].key),
+                                      (int)name_len,
                                       (char *)telts[i].val,
-                                      telts[i].val ? (int)strlen(telts[i].val) : 0);
+                                      (int)val_len);
         }
 
         coraza_process_request_headers(ctx->transaction);

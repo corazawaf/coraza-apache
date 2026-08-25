@@ -83,6 +83,21 @@ coraza_input_filter(ap_filter_t *f, apr_bucket_brigade *bb,
         }
 
         if (len > 0) {
+            /*
+             * coraza_append_request_body takes an int length; guard the
+             * apr_size_t -> int narrowing so a >INT_MAX bucket cannot wrap to a
+             * bogus length and have the engine inspect the wrong span. Fail
+             * closed.
+             */
+            if (len > INT_MAX) {
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r,
+                              "coraza: request body chunk too large to inspect");
+                ctx->intervention_triggered = 1;
+                ctx->phase2_done = 1;
+                ap_remove_input_filter(f);
+                return APR_EGENERAL;
+            }
+
             if (CORAZA_CALL_FAILED(coraza_append_request_body(ctx->transaction,
                                        (unsigned char *)data, (int)len))) {
                 ctx->intervention_triggered = 1;
