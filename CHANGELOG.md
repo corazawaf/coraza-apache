@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.20.0](https://github.com/corazawaf/coraza-apache/compare/v0.3.0...v0.20.0) (2026-08-26)
+
+
+### release
+
+* prepare 0.20.0 ([97da1cf](https://github.com/corazawaf/coraza-apache/commit/97da1cf6bc4a07aa4beb5d7bec2fae0675259b9c))
+
+
+### Bug Fixes
+
+* cap delayed response-body buffering to bound worker memory ([c2d5af7](https://github.com/corazawaf/coraza-apache/commit/c2d5af78c79e7683e292228c7041f780c8cbff91))
+* cap delayed response-body buffering to bound worker memory ([9685f71](https://github.com/corazawaf/coraza-apache/commit/9685f71463d20520b36f5171d9d77500e2363541))
+* fail closed when body submission or processing fails in Coraza ([8031a75](https://github.com/corazawaf/coraza-apache/commit/8031a7500160be9b311b52758a8372c205a8abdb))
+* fail closed when body submission or processing fails in Coraza ([70afb20](https://github.com/corazawaf/coraza-apache/commit/70afb20170cebd53af9b8e31533211b4429d78f5))
+* fail closed when transaction creation fails in create_ctx ([adab744](https://github.com/corazawaf/coraza-apache/commit/adab7448506c35f5574908cc8a8db621cc1a34a7))
+* fail closed when transaction creation fails in create_ctx ([8485aa6](https://github.com/corazawaf/coraza-apache/commit/8485aa6754f5b36e6d8c089ed7df050a2613a78a))
+* guard size_t to int narrowing at the Coraza cgo boundary ([4425e23](https://github.com/corazawaf/coraza-apache/commit/4425e23e5319ba9d3fa314f48a0d3afe44624f44))
+* guard size_t to int narrowing at the Coraza cgo boundary ([5ef6cd9](https://github.com/corazawaf/coraza-apache/commit/5ef6cd9e3e150a5aae50672be30ebb80aa9c3095))
+* report REQUEST_PROTOCOL in slash-delimited form ([a83c85b](https://github.com/corazawaf/coraza-apache/commit/a83c85bd7fbad49497ec43e3f68c34c95c2f3495))
+* report REQUEST_PROTOCOL in slash-delimited form ([4dbfc0f](https://github.com/corazawaf/coraza-apache/commit/4dbfc0fea259f4bca7890a95e696ea73551a07f6))
+* stream SSE responses instead of buffering them ([9edb2ab](https://github.com/corazawaf/coraza-apache/commit/9edb2abc502ccd80102112918044baa9dbc838d2))
+* stream SSE responses instead of buffering them ([706f502](https://github.com/corazawaf/coraza-apache/commit/706f5027edacf6139d5a55c8df7a9bbdfb6f6b7f))
+
 ## [0.3.0](https://github.com/corazawaf/coraza-apache/compare/v0.2.0...v0.3.0) (2026-04-16)
 
 
