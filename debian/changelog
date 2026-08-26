@@ -1,3 +1,20 @@
+libapache2-mod-coraza (0.20.0-1) unstable; urgency=low
+
+  * New upstream release 0.20.0. Version aligned with the coraza-nginx
+    connector so the Coraza connectors share one version line.
+  * Security: fail closed when request-body, response-body, or body-phase
+    submission to Coraza fails, and validate the transaction handle in
+    create_ctx; guard size_t-to-int narrowing at the cgo boundary.
+  * Correctness: report REQUEST_PROTOCOL in slash-delimited form; sanitize
+    control bytes in the synthesized Location header.
+  * Streaming / memory: stream Server-Sent Events responses instead of
+    buffering them, and cap delayed response-body buffering to bound worker
+    memory.
+  * Keep libcoraza loaded for the process lifetime (the Go runtime cannot be
+    unloaded).
+
+ -- Pierre Pomes <pierre.pomes@gmail.com>  Mon, 25 Aug 2026 12:00:00 +0000
+
 libapache2-mod-coraza (0.0.1-1) unstable; urgency=low
 
   * Initial Debian packaging.
