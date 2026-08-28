@@ -17,7 +17,7 @@ sudo apt update
 sudo apt install libapache2-mod-coraza
 ```
 
-This pulls in libcoraza automatically. Built for Ubuntu 22.04 (jammy), 24.04 (noble), 25.10 (questing), 26.04 (resolute) and 26.10 (stonking).
+This pulls in libcoraza automatically. Built for Ubuntu 22.04 (jammy), 24.04 (noble), 26.04 (resolute) and 26.10 (stonking).
 
 ## Build
 
