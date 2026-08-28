@@ -98,9 +98,9 @@ typedef struct {
  * Non-zero when the loaded libcoraza returns a tri-state from the
  * coraza_process_* calls: CORAZA_ERROR (-1), CORAZA_OK (0),
  * CORAZA_INTERRUPTION (1). Before 1.5 those calls returned 1 on an engine
- * error and never signalled an interruption. Detected in coraza_dl_open() by
- * probing for a symbol only present in 1.5+, because the ABI is picked when
- * libcoraza.so is dlopen'd, not when this module is compiled.
+ * error and never signalled an interruption. Determined in coraza_dl_open()
+ * from the loaded library rather than from the headers this module was built
+ * against, because the ABI is picked when libcoraza.so is dlopen'd.
  */
 extern int coraza_tristate_abi;
 
