@@ -81,6 +81,8 @@ static fn_coraza_is_response_body_processable dl_is_response_body_processable;
 
 static dynlib_t dl_handle;
 
+int coraza_tristate_abi;
+
 /* ------------------------------------------------------------------ */
 /* Resolve one symbol -- returns HTTP_INTERNAL_SERVER_ERROR on failure  */
 /* ------------------------------------------------------------------ */
@@ -148,9 +150,20 @@ coraza_dl_open(server_rec *s)
     DL_SYM(dl_is_response_body_processable,
            coraza_is_response_body_processable);
 
+    /*
+     * coraza_add_request_headers appeared in libcoraza 1.5, the same release
+     * that turned the coraza_process_* return value into a tri-state. Probe
+     * for it to pick the right reading of that value (see
+     * coraza_process_failed) -- it is not used otherwise, and its absence is
+     * not an error.
+     */
+    coraza_tristate_abi =
+        (dynlib_sym(dl_handle, "coraza_add_request_headers") != NULL);
+
     ap_log_error(APLOG_MARK, APLOG_NOTICE, 0, s,
-                 "coraza: %s loaded via dynlib_open",
-                 CORAZA_DYNLIB_BASENAME DYNLIB_EXT);
+                 "coraza: %s loaded via dynlib_open (libcoraza %s ABI)",
+                 CORAZA_DYNLIB_BASENAME DYNLIB_EXT,
+                 coraza_tristate_abi ? ">= 1.5" : "< 1.5");
 
     return OK;
 }

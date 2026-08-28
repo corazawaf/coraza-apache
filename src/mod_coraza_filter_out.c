@@ -297,7 +297,7 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
     if (has_eos) {
         /* Process complete response body */
-        if (CORAZA_CALL_FAILED(coraza_process_response_body(ctx->transaction))) {
+        if (coraza_process_failed(coraza_process_response_body(ctx->transaction))) {
             return coraza_fail_closed_response(f, r, ctx, bb);
         }
 

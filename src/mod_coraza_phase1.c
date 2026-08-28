@@ -199,7 +199,7 @@ coraza_post_read_request(request_rec *r)
                 return HTTP_BAD_REQUEST;
             }
 
-            if (CORAZA_CALL_FAILED(coraza_process_request_body(ctx->transaction))) {
+            if (coraza_process_failed(coraza_process_request_body(ctx->transaction))) {
                 ctx->intervention_triggered = 1;
                 return HTTP_INTERNAL_SERVER_ERROR;
             }
@@ -212,7 +212,7 @@ coraza_post_read_request(request_rec *r)
             }
         } else {
             /* No body to read, still finalize phase 2 */
-            if (CORAZA_CALL_FAILED(coraza_process_request_body(ctx->transaction))) {
+            if (coraza_process_failed(coraza_process_request_body(ctx->transaction))) {
                 ctx->intervention_triggered = 1;
                 return HTTP_INTERNAL_SERVER_ERROR;
             }

@@ -86,13 +86,39 @@ typedef struct {
 #endif
 
 /*
- * Fail-closed check for the body submit/process calls. The libcoraza ABI this
- * module targets (< 1.6) returns non-zero on an engine error and 0 on success;
- * interruptions are reported separately via coraza_intervention(). A non-zero
- * return therefore means inspection could not complete, and the request or
- * response must be failed closed rather than passed through uninspected.
+ * Fail-closed check for the body submit calls (coraza_append_*, coraza_add_*).
+ * These return 0 on success and 1 on an engine error and never signal an
+ * interruption, so any non-zero return means inspection could not complete and
+ * the request or response must be failed closed rather than passed through
+ * uninspected.
  */
 #define CORAZA_CALL_FAILED(rc) ((rc) != 0)
+
+/*
+ * Non-zero when the loaded libcoraza returns a tri-state from the
+ * coraza_process_* calls: CORAZA_ERROR (-1), CORAZA_OK (0),
+ * CORAZA_INTERRUPTION (1). Before 1.5 those calls returned 1 on an engine
+ * error and never signalled an interruption. Detected in coraza_dl_open() by
+ * probing for a symbol only present in 1.5+, because the ABI is picked when
+ * libcoraza.so is dlopen'd, not when this module is compiled.
+ */
+extern int coraza_tristate_abi;
+
+/*
+ * Fail-closed check for the coraza_process_* calls. On the tri-state ABI only
+ * CORAZA_ERROR is a failure: an interruption is the normal outcome of a deny
+ * rule and must fall through to coraza_process_intervention() so the rule's
+ * own status is returned instead of 500. On the older ABI any non-zero return
+ * is an engine error. Written as < 0 rather than == CORAZA_ERROR so the module
+ * still builds against pre-1.5 headers, which do not declare the enum, and as
+ * a function rather than a macro because every caller passes a call
+ * expression that must be evaluated exactly once.
+ */
+static inline int
+coraza_process_failed(int rc)
+{
+    return coraza_tristate_abi ? rc < 0 : rc != 0;
+}
 
 /* Per-request context */
 typedef struct {
