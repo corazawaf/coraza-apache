@@ -12,14 +12,15 @@ jobs:
   build:
     permissions:
       contents: read
-    name: Build and test (${{ matrix.mpm }} MPM)
+    name: Build and test (${{ matrix.mpm }} MPM, libcoraza ${{ matrix.libcoraza }})
     runs-on: ubuntu-24.04
-    env:
-      # renovate: datasource=github-releases depName=corazawaf/libcoraza
-      LIBCORAZA_VERSION: v1.4.0
     strategy:
       matrix:
         mpm: [event, prefork]
+        # Both coraza_process_* ABIs: v1.4.0 returns 1 on an engine error,
+        # v1.5.0 and later return the tri-state coraza_result_t.
+        # renovate: datasource=github-releases depName=corazawaf/libcoraza
+        libcoraza: [v1.7.0, v1.4.0]
 
     steps:
       - name: Checkout repo
@@ -29,6 +30,7 @@ jobs:
         run: |
           docker build --no-cache \
             --build-arg MPM=${{ matrix.mpm }} \
+            --build-arg LIBCORAZA_VERSION=${{ matrix.libcoraza }} \
             -t coraza-apache-${{ matrix.mpm }} .
 
       - name: Start Apache container
@@ -79,7 +81,7 @@ jobs:
           ~/go/bin/go-ftw run --cloud --config tests/ftw-crs.yml -d /tmp/coreruleset-${CRS_VERSION}/tests/regression/tests/
 
       - name: Extract module artifact
-        if: matrix.mpm == 'event'
+        if: matrix.mpm == 'event' && matrix.libcoraza == 'v1.7.0'
         run: |
           docker cp \
             coraza-apache-${{ matrix.mpm }}:/usr/local/apache2/modules/mod_coraza.so \
@@ -90,7 +92,7 @@ jobs:
         run: docker stop coraza-apache-${{ matrix.mpm }} || true
 
       - name: Upload module artifact
-        if: matrix.mpm == 'event'
+        if: matrix.mpm == 'event' && matrix.libcoraza == 'v1.7.0'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: mod_coraza-linux-amd64

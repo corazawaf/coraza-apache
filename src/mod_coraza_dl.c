@@ -45,6 +45,7 @@ typedef int                  (*fn_coraza_process_logging)(coraza_transaction_t);
 typedef int                  (*fn_coraza_update_status_code)(coraza_transaction_t, int);
 typedef int                  (*fn_coraza_add_get_args)(coraza_transaction_t, char *, char *);
 typedef int                  (*fn_coraza_is_response_body_processable)(coraza_transaction_t);
+typedef int                  (*fn_coraza_version_num)(void);
 
 /* ------------------------------------------------------------------ */
 /* Static function pointers -- set once by coraza_dl_open()            */
@@ -81,6 +82,8 @@ static fn_coraza_is_response_body_processable dl_is_response_body_processable;
 
 static dynlib_t dl_handle;
 
+int coraza_tristate_abi;
+
 /* ------------------------------------------------------------------ */
 /* Resolve one symbol -- returns HTTP_INTERNAL_SERVER_ERROR on failure  */
 /* ------------------------------------------------------------------ */
@@ -105,6 +108,10 @@ static dynlib_t dl_handle;
 int
 coraza_dl_open(server_rec *s)
 {
+    fn_coraza_version_num version_num;
+    int version;
+    char version_str[32];
+
     if (dl_handle != NULL) {
         return OK;
     }
@@ -148,9 +155,33 @@ coraza_dl_open(server_rec *s)
     DL_SYM(dl_is_response_body_processable,
            coraza_is_response_body_processable);
 
+    /*
+     * Pick how to read the coraza_process_* return value (see
+     * coraza_process_failed). coraza_version_num() reports the version of the
+     * library that actually got loaded, so it is the explicit test -- but it
+     * only exists from libcoraza 1.7.0, and its absence spans both ABIs. Fall
+     * back to probing for coraza_add_request_headers, which first appears in
+     * 1.5, the same release that introduced the tri-state. Neither symbol is
+     * required and neither is used for anything else.
+     */
+    *(void **)(&version_num) = dynlib_sym(dl_handle, "coraza_version_num");
+
+    if (version_num != NULL) {
+        version = version_num();
+        coraza_tristate_abi = (version >= 10500);
+        apr_snprintf(version_str, sizeof(version_str), "%d.%d.%d",
+                     version / 10000, version / 100 % 100, version % 100);
+    } else {
+        coraza_tristate_abi =
+            (dynlib_sym(dl_handle, "coraza_add_request_headers") != NULL);
+        apr_cpystrn(version_str, "< 1.7.0", sizeof(version_str));
+    }
+
     ap_log_error(APLOG_MARK, APLOG_NOTICE, 0, s,
-                 "coraza: %s loaded via dynlib_open",
-                 CORAZA_DYNLIB_BASENAME DYNLIB_EXT);
+                 "coraza: %s loaded via dynlib_open "
+                 "(libcoraza %s, %s coraza_process_* ABI)",
+                 CORAZA_DYNLIB_BASENAME DYNLIB_EXT, version_str,
+                 coraza_tristate_abi ? "tri-state" : "pre-1.5");
 
     return OK;
 }

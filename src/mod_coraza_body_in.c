@@ -50,7 +50,7 @@ coraza_input_filter(ap_filter_t *f, apr_bucket_brigade *bb,
 
         if (APR_BUCKET_IS_EOS(b)) {
             /* End of request body -- process it */
-            if (CORAZA_CALL_FAILED(coraza_process_request_body(ctx->transaction))) {
+            if (coraza_process_failed(coraza_process_request_body(ctx->transaction))) {
                 /* Engine error: fail closed rather than pass uninspected. */
                 ctx->intervention_triggered = 1;
                 ctx->phase2_done = 1;

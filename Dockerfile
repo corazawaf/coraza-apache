@@ -11,7 +11,7 @@ RUN set -eux; \
         bash \
         make
 
-ARG LIBCORAZA_VERSION=v1.4.0
+ARG LIBCORAZA_VERSION=v1.7.0
 
 RUN set -eux; \
     wget https://github.com/corazawaf/libcoraza/tarball/${LIBCORAZA_VERSION} -O /tmp/libcoraza.tar.gz; \
