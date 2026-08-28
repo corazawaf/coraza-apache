@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.20.1](https://github.com/corazawaf/coraza-apache/compare/v0.20.0...v0.20.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* read the loaded libcoraza version for the ABI check ([3ca5c20](https://github.com/corazawaf/coraza-apache/commit/3ca5c209219888b1b1e0b85ab5c1b326914286b5))
+* return the rule status for phase-2/4 interruptions ([b4babc8](https://github.com/corazawaf/coraza-apache/commit/b4babc8dadd48b6def4309ed229f281f9c021f8f))
+* return the rule status for phase-2/4 interruptions ([b61a8f7](https://github.com/corazawaf/coraza-apache/commit/b61a8f787ba658fffb6a1138cbaba5be221ec5f4)), closes [#26](https://github.com/corazawaf/coraza-apache/issues/26)
+
 ## [0.20.0](https://github.com/corazawaf/coraza-apache/compare/v0.3.0...v0.20.0) (2026-08-26)
 
 
