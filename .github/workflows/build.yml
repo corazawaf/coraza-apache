@@ -17,10 +17,10 @@ jobs:
     strategy:
       matrix:
         mpm: [event, prefork]
-        # Both coraza_process_* ABIs: v1.4.0 returns 1 on an engine error,
-        # v1.5.0 and later return the tri-state coraza_result_t.
+        # The module requires libcoraza >= 1.7.0 (coraza_dl_open gates on
+        # coraza_version_num); older releases are rejected at startup.
         # renovate: datasource=github-releases depName=corazawaf/libcoraza
-        libcoraza: [v1.7.0, v1.4.0]
+        libcoraza: [v1.7.0]
 
     steps:
       - name: Checkout repo
