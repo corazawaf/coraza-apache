@@ -21,7 +21,7 @@ This pulls in libcoraza automatically. Built for Ubuntu 22.04 (jammy), 24.04 (no
 
 ## Build
 
-Requires libcoraza >= 1.4.0 headers at compile time and the shared library at runtime.
+Requires libcoraza >= 1.6 headers at compile time and the shared library at runtime.
 The module is not linked against libcoraza -- it loads it via dlopen()
 after fork to avoid Go runtime deadlocks.
 
