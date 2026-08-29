@@ -82,8 +82,6 @@ static fn_coraza_is_response_body_processable dl_is_response_body_processable;
 
 static dynlib_t dl_handle;
 
-int coraza_tristate_abi;
-
 /* ------------------------------------------------------------------ */
 /* Resolve one symbol -- returns HTTP_INTERNAL_SERVER_ERROR on failure  */
 /* ------------------------------------------------------------------ */
@@ -156,32 +154,29 @@ coraza_dl_open(server_rec *s)
            coraza_is_response_body_processable);
 
     /*
-     * Pick how to read the coraza_process_* return value (see
-     * coraza_process_failed). coraza_version_num() reports the version of the
-     * library that actually got loaded, so it is the explicit test -- but it
-     * only exists from libcoraza 1.7.0, and its absence spans both ABIs. Fall
-     * back to probing for coraza_add_request_headers, which first appears in
-     * 1.5, the same release that introduced the tri-state. Neither symbol is
-     * required and neither is used for anything else.
+     * Gate on the loaded library's version. coraza_version_num() first appears
+     * in 1.7.0 and reports the version of the library actually dlopen'd -- the
+     * authoritative test for a module that resolves everything at runtime. From
+     * 1.5 the coraza_process_* calls use the tri-state coraza_result_t contract
+     * that coraza_process_failed() assumes (< 0 == error, 1 == interruption).
+     * A library that does not export coraza_version_num(), or reports < 1.7.0,
+     * is unsupported: fail coraza_dl_open() so the worker refuses to start
+     * (fail closed) rather than mis-read an interruption as an engine error.
      */
     *(void **)(&version_num) = dynlib_sym(dl_handle, "coraza_version_num");
-
-    if (version_num != NULL) {
-        version = version_num();
-        coraza_tristate_abi = (version >= 10500);
-        apr_snprintf(version_str, sizeof(version_str), "%d.%d.%d",
-                     version / 10000, version / 100 % 100, version % 100);
-    } else {
-        coraza_tristate_abi =
-            (dynlib_sym(dl_handle, "coraza_add_request_headers") != NULL);
-        apr_cpystrn(version_str, "< 1.7.0", sizeof(version_str));
+    version = version_num != NULL ? version_num() : 0;
+    if (version < 10700) {
+        ap_log_error(APLOG_MARK, APLOG_EMERG, 0, s,
+                     "coraza: libcoraza >= 1.7.0 required, but the loaded "
+                     "library does not report a compatible version");
+        return HTTP_INTERNAL_SERVER_ERROR;
     }
+    apr_snprintf(version_str, sizeof(version_str), "%d.%d.%d",
+                 version / 10000, version / 100 % 100, version % 100);
 
     ap_log_error(APLOG_MARK, APLOG_NOTICE, 0, s,
-                 "coraza: %s loaded via dynlib_open "
-                 "(libcoraza %s, %s coraza_process_* ABI)",
-                 CORAZA_DYNLIB_BASENAME DYNLIB_EXT, version_str,
-                 coraza_tristate_abi ? "tri-state" : "pre-1.5");
+                 "coraza: %s loaded via dynlib_open (libcoraza %s)",
+                 CORAZA_DYNLIB_BASENAME DYNLIB_EXT, version_str);
 
     return OK;
 }

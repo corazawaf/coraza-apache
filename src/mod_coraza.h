@@ -95,29 +95,20 @@ typedef struct {
 #define CORAZA_CALL_FAILED(rc) ((rc) != 0)
 
 /*
- * Non-zero when the loaded libcoraza returns a tri-state from the
- * coraza_process_* calls: CORAZA_ERROR (-1), CORAZA_OK (0),
- * CORAZA_INTERRUPTION (1). Before 1.5 those calls returned 1 on an engine
- * error and never signalled an interruption. Determined in coraza_dl_open()
- * from the loaded library rather than from the headers this module was built
- * against, because the ABI is picked when libcoraza.so is dlopen'd.
- */
-extern int coraza_tristate_abi;
-
-/*
- * Fail-closed check for the coraza_process_* calls. On the tri-state ABI only
- * CORAZA_ERROR is a failure: an interruption is the normal outcome of a deny
- * rule and must fall through to coraza_process_intervention() so the rule's
- * own status is returned instead of 500. On the older ABI any non-zero return
- * is an engine error. Written as < 0 rather than == CORAZA_ERROR so the module
- * still builds against pre-1.5 headers, which do not declare the enum, and as
- * a function rather than a macro because every caller passes a call
- * expression that must be evaluated exactly once.
+ * Fail-closed check for the coraza_process_* calls. coraza_dl_open() requires
+ * libcoraza >= 1.7.0, which uses the tri-state coraza_result_t contract:
+ * CORAZA_ERROR (-1), CORAZA_OK (0), CORAZA_INTERRUPTION (1). Only CORAZA_ERROR
+ * is a failure -- an interruption is the normal outcome of a deny rule and must
+ * fall through to coraza_process_intervention() so the rule's own status is
+ * returned instead of 500. Written as < 0 rather than == CORAZA_ERROR so the
+ * module still builds against headers that do not name the enum, and as a
+ * function rather than a macro because every caller passes a call expression
+ * that must be evaluated exactly once.
  */
 static inline int
 coraza_process_failed(int rc)
 {
-    return coraza_tristate_abi ? rc < 0 : rc != 0;
+    return rc < 0;
 }
 
 /* Per-request context */
