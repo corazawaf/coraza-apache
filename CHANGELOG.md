@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/corazawaf/coraza-apache/compare/v0.20.1...v0.21.0) (2026-08-30)
+
+
+### release
+
+* prepare 0.21.0 ([#32](https://github.com/corazawaf/coraza-apache/issues/32)) ([eba1e7d](https://github.com/corazawaf/coraza-apache/commit/eba1e7d5c81d052e1be223513519c79059af34a1))
+
 ## [0.20.1](https://github.com/corazawaf/coraza-apache/compare/v0.20.0...v0.20.1) (2026-08-28)
 
 
