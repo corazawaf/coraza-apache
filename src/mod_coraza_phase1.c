@@ -224,6 +224,12 @@ coraza_post_read_request(request_rec *r)
             APR_BRIGADE_INSERT_TAIL(
                 ctx->saved_body,
                 apr_bucket_eos_create(r->connection->bucket_alloc));
+            /* ap_get_client_block() advanced r->read_length, and
+             * ap_should_client_block() treats a non-zero read_length as "body
+             * already read" (ap_setup_client_block() does not reset it). Zero
+             * it so handlers on the legacy ap_get_client_block() API ask for
+             * the body and receive the replay; brigade readers are unaffected. */
+            r->read_length = 0;
             ap_add_input_filter(CORAZA_IN_FILTER, ctx, r, r->connection);
 
             if (coraza_process_failed(coraza_process_request_body(ctx->transaction))) {
