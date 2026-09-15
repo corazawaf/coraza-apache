@@ -49,28 +49,33 @@ coraza_replay_saved_body(ap_filter_t *f, apr_bucket_brigade *bb,
     }
 
     if (mode == AP_MODE_SPECULATIVE) {
+        /* Copy without consuming, and never more than asked for: partition
+         * first, as the core input filter does, since a saved bucket can be
+         * larger than readbytes. */
         apr_bucket *e;
-        apr_off_t seen = 0;
 
-        for (e = APR_BRIGADE_FIRST(saved);
-             e != APR_BRIGADE_SENTINEL(saved) && seen < readbytes;
-             e = APR_BUCKET_NEXT(e))
-        {
+        stop = APR_BRIGADE_SENTINEL(saved);
+        if (readbytes > 0) {
+            rv = apr_brigade_partition(saved, readbytes, &stop);
+            if (rv != APR_SUCCESS && rv != APR_INCOMPLETE) {
+                return rv;
+            }
+        }
+        for (e = APR_BRIGADE_FIRST(saved); e != stop; e = APR_BUCKET_NEXT(e)) {
             apr_bucket *copy;
 
-            if (apr_bucket_copy(e, &copy) != APR_SUCCESS) {
-                break;
+            rv = apr_bucket_copy(e, &copy);
+            if (rv != APR_SUCCESS) {
+                return rv;
             }
             APR_BRIGADE_INSERT_TAIL(bb, copy);
-            if (!APR_BUCKET_IS_METADATA(e)) {
-                seen += (apr_off_t)e->length;
-            }
         }
         return APR_SUCCESS;
     }
 
-    /* AP_MODE_READBYTES and AP_MODE_EXHAUSTIVE. */
-    if (readbytes <= 0) {
+    /* AP_MODE_EXHAUSTIVE reads until nothing is left and ignores readbytes;
+     * AP_MODE_READBYTES with no limit is the same request. */
+    if (mode == AP_MODE_EXHAUSTIVE || readbytes <= 0) {
         APR_BRIGADE_CONCAT(bb, saved);
         return APR_SUCCESS;
     }
