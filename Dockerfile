@@ -112,6 +112,8 @@ COPY tests/cgi-bin/sse /usr/local/apache2/cgi-bin/sse
 RUN chmod +x /usr/local/apache2/cgi-bin/sse
 COPY tests/cgi-bin/bulk /usr/local/apache2/cgi-bin/bulk
 RUN chmod +x /usr/local/apache2/cgi-bin/bulk
+COPY tests/cgi-bin/echo /usr/local/apache2/cgi-bin/echo
+RUN chmod +x /usr/local/apache2/cgi-bin/echo
 
 # Apache config: load module, enable coraza with CRS, FallbackResource for test URLs
 RUN { \
@@ -195,6 +197,7 @@ RUN { \
     echo 'ScriptAlias "/sse-stream" "/usr/local/apache2/cgi-bin/sse"'; \
     echo 'ScriptAlias "/sse-nearmiss" "/usr/local/apache2/cgi-bin/sse"'; \
     echo 'ScriptAlias "/bulk-delayed" "/usr/local/apache2/cgi-bin/bulk"'; \
+    echo 'ScriptAlias "/echo" "/usr/local/apache2/cgi-bin/echo"'; \
     echo '<Directory "/usr/local/apache2/cgi-bin">'; \
     echo '    Require all granted'; \
     echo '    Options +ExecCGI'; \

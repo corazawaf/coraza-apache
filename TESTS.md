@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **124 tests** against a Docker
+The integration test suite (`test.sh`) runs **127 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (124 tests, event MPM)
+# Full suite (127 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (104 tests, no audit/debug log checks, no MPM verification)
+# Minimal (107 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -164,9 +164,22 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 124-test suite passes after all restarts.
+restarts (1s apart). Full 127-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered
 
 - Redirect interventions (`intervention->url` not available in libcoraza)
+
+### Request body replay (3 tests)
+
+The fixups hook reads the request body with `ap_get_client_block()` to inspect
+it before the handler runs. That consumes the connection input, so `CORAZA_IN`
+replays the copy it kept (issue #34). `/echo` is a CGI script that writes back
+what it received.
+
+| Test | Asserts |
+|------|---------|
+| POST JSON body is delivered | echoed body equals the payload |
+| POST 20 KB body is delivered intact | multi-bucket replay across 8 KiB reads, terminated by EOS |
+| PUT static file with body: 405, not 400 | exhausted replay delegates instead of returning `APR_EOF` |

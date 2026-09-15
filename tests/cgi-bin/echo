@@ -1,0 +1,13 @@
+#!/bin/sh
+# Echo endpoint for the request-body replay test (issue #34).
+#
+# Writes the request body back verbatim so a test can assert on what the
+# handler actually received, not just on a status code. It reads stdin to EOF
+# on purpose rather than CONTENT_LENGTH bytes: if the replayed body is not
+# terminated by an EOS bucket the read blocks, and the test then fails on
+# curl's --max-time instead of passing on an empty body.
+/usr/bin/printf 'Content-Type: text/plain\r\n\r\n'
+/usr/bin/printf 'CONTENT_LENGTH=[%s]\n' "${CONTENT_LENGTH:-}"
+/usr/bin/printf 'BODY=['
+cat
+/usr/bin/printf ']\n'
