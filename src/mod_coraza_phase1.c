@@ -16,7 +16,45 @@
  */
 
 #include "mod_coraza.h"
+#include "apr_strings.h"
+#include "apr_file_io.h"
+#include "http_log.h"
 #include <string.h>
+
+/*
+ * Open the temp file the saved request body spills into once it passes
+ * CorazaRequestBodyInMemoryLimit. Exclusive, binary, and deleted on close --
+ * the request pool closes it, so the file never outlives the request.
+ */
+static apr_status_t
+coraza_open_body_spool(request_rec *r, apr_file_t **spool)
+{
+    const char *tmpdir;
+    char *tmpl;
+    apr_status_t rv;
+
+    rv = apr_temp_dir_get(&tmpdir, r->pool);
+    if (rv != APR_SUCCESS) {
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
+                      "coraza: no temp directory to spool the request body");
+        return rv;
+    }
+    tmpl = apr_pstrcat(r->pool, tmpdir, "/coraza-body-XXXXXX", NULL);
+    rv = apr_file_mktemp(spool, tmpl,
+                         APR_FOPEN_CREATE | APR_FOPEN_READ | APR_FOPEN_WRITE
+                         | APR_FOPEN_EXCL | APR_FOPEN_BINARY
+                         | APR_FOPEN_DELONCLOSE,
+                         r->pool);
+    if (rv != APR_SUCCESS) {
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
+                      "coraza: cannot create request body spool file %s", tmpl);
+        return rv;
+    }
+    ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r,
+                  "coraza: request body exceeds CorazaRequestBodyInMemoryLimit, "
+                  "spooling the remainder to %s", tmpl);
+    return APR_SUCCESS;
+}
 
 /*
  * Fixups hook (runs as APR_HOOK_REALLY_FIRST):
@@ -188,6 +226,13 @@ coraza_post_read_request(request_rec *r)
 
         /* ap_should_client_block: returns true if there is a body to read */
         if (ap_should_client_block(r)) {
+            apr_off_t mem_limit = (dcf->body_mem_limit >= 0)
+                                  ? dcf->body_mem_limit
+                                  : CORAZA_DEFAULT_BODY_MEM_LIMIT;
+            apr_off_t saved_len = 0;
+            apr_file_t *spool = NULL;
+            apr_off_t spool_len = 0;
+
             ctx->saved_body = apr_brigade_create(r->pool,
                                                  r->connection->bucket_alloc);
 
@@ -195,11 +240,32 @@ coraza_post_read_request(request_rec *r)
             while ((nread = ap_get_client_block(r, buf, sizeof(buf))) > 0) {
                 /* Keep a copy before inspecting: an intervention returns from
                  * inside this loop, and on that path the request never reaches
-                 * a handler anyway. */
-                if (apr_brigade_write(ctx->saved_body, NULL, NULL,
-                                      buf, (apr_size_t)nread) != APR_SUCCESS) {
-                    ctx->intervention_triggered = 1;
-                    return HTTP_INTERNAL_SERVER_ERROR;
+                 * a handler anyway. The copy lives in memory up to
+                 * CorazaRequestBodyInMemoryLimit and in a temp file past it, so
+                 * a large upload does not pin its whole body in worker memory
+                 * (the engine's own limits do not bound this copy: under
+                 * ProcessPartial the read continues past SecRequestBodyLimit). */
+                if (spool == NULL && saved_len + nread <= mem_limit) {
+                    if (apr_brigade_write(ctx->saved_body, NULL, NULL,
+                                          buf, (apr_size_t)nread) != APR_SUCCESS) {
+                        ctx->intervention_triggered = 1;
+                        return HTTP_INTERNAL_SERVER_ERROR;
+                    }
+                    saved_len += nread;
+                } else {
+                    if (spool == NULL
+                        && coraza_open_body_spool(r, &spool) != APR_SUCCESS) {
+                        ctx->intervention_triggered = 1;
+                        return HTTP_INTERNAL_SERVER_ERROR;
+                    }
+                    if (apr_file_write_full(spool, buf, (apr_size_t)nread, NULL)
+                            != APR_SUCCESS) {
+                        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                                      "coraza: failed to spool request body");
+                        ctx->intervention_triggered = 1;
+                        return HTTP_INTERNAL_SERVER_ERROR;
+                    }
+                    spool_len += nread;
                 }
 
                 if (CORAZA_CALL_FAILED(coraza_append_request_body(
@@ -218,6 +284,15 @@ coraza_post_read_request(request_rec *r)
 
             if (nread < 0) {
                 return HTTP_BAD_REQUEST;
+            }
+
+            if (spool != NULL) {
+                /* The spooled tail follows the in-memory head as one file
+                 * bucket; the replay filter partitions it like any other. */
+                APR_BRIGADE_INSERT_TAIL(
+                    ctx->saved_body,
+                    apr_bucket_file_create(spool, 0, (apr_size_t)spool_len,
+                                           r->pool, r->connection->bucket_alloc));
             }
 
             /* The handler reads until EOS, so the replay has to carry one. */

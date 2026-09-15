@@ -411,6 +411,27 @@ cmd_sec_directive(cmd_parms *cmd, void *dcfg, const char *args)
                      RSRC_CONF | ACCESS_CONF | OR_ALL, \
                      "Native modsecurity directive (handled by Coraza)")
 
+/*
+ * CorazaRequestBodyInMemoryLimit <bytes>: how much of a request body the
+ * fixups read keeps in memory for the CORAZA_IN replay; the remainder is
+ * spooled to a temp file. Distinct from the engine's SecRequestBodyInMemoryLimit,
+ * which may live inside a rules file the connector never parses.
+ */
+static const char *
+cmd_coraza_body_mem_limit(cmd_parms *cmd, void *cfg, const char *arg)
+{
+    coraza_dir_conf_t *dcf = cfg;
+    apr_off_t limit;
+    char *end;
+
+    if (apr_strtoff(&limit, arg, &end, 10) != APR_SUCCESS
+        || *end != '\0' || limit < 0) {
+        return "CorazaRequestBodyInMemoryLimit must be a non-negative number of bytes";
+    }
+    dcf->body_mem_limit = limit;
+    return NULL;
+}
+
 static const command_rec coraza_directives[] = {
     AP_INIT_FLAG("Coraza", cmd_coraza_enable, NULL,
                  RSRC_CONF | ACCESS_CONF | OR_ALL,
@@ -424,6 +445,9 @@ static const command_rec coraza_directives[] = {
     AP_INIT_TAKE1("CorazaTransactionId", cmd_coraza_transaction_id, NULL,
                   RSRC_CONF | ACCESS_CONF | OR_ALL,
                   "Custom transaction ID"),
+    AP_INIT_TAKE1("CorazaRequestBodyInMemoryLimit", cmd_coraza_body_mem_limit, NULL,
+                  RSRC_CONF | ACCESS_CONF | OR_ALL,
+                  "Bytes of request body kept in memory for replay before spooling to disk"),
 
     /* Native Sec* directives — all handled by cmd_sec_directive */
     SEC_DIRECTIVE("SecRuleEngine"),
@@ -506,6 +530,7 @@ coraza_create_dir_conf(apr_pool_t *p, char *dir)
 
     dcf = apr_pcalloc(p, sizeof(coraza_dir_conf_t));
     dcf->enable = -1;  /* unset */
+    dcf->body_mem_limit = -1;  /* unset */
     dcf->rules = apr_array_make(p, 4, sizeof(coraza_rule_entry_t));
 
     return dcf;
@@ -528,6 +553,10 @@ coraza_merge_dir_conf(apr_pool_t *p, void *parent, void *child)
     /* Child transaction_id overrides parent when set */
     merged->transaction_id = cconf->transaction_id ?
         cconf->transaction_id : pconf->transaction_id;
+
+    /* Child in-memory body limit overrides parent when set */
+    merged->body_mem_limit = (cconf->body_mem_limit != -1) ?
+        cconf->body_mem_limit : pconf->body_mem_limit;
 
     /* Prepend parent rules before child rules */
     if (pconf->rules->nelts > 0) {

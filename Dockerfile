@@ -202,6 +202,12 @@ RUN { \
     echo '    Require all granted'; \
     echo '    Options +ExecCGI'; \
     echo '</Directory>'; \
+    echo '# Request-body replay: spool from 64 KiB on the echo endpoint so the'; \
+    echo '# 300 KB upload test exercises the directive, its per-Location override'; \
+    echo '# and the spool path (default is 128 KiB).'; \
+    echo '<Location "/echo">'; \
+    echo '    CorazaRequestBodyInMemoryLimit 65536'; \
+    echo '</Location>'; \
     echo '<Location "/sse-stream">'; \
     echo '    SetEnv SSE_CT "text/event-stream"'; \
     echo '    SecRule ARGS:attack "@streq 1" "id:20810,phase:1,deny,status:403,log"'; \

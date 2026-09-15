@@ -116,6 +116,13 @@ files that reference relative data file paths. Context: server config, `<Virtual
 Rules defined at server level are inherited by `<VirtualHost>`, `<Location>`, `<Directory>`, and `.htaccess`.
 Setting `Coraza Off` in any context disables inspection for that scope.
 
+**CorazaRequestBodyInMemoryLimit** bytes -- how much of a request body is kept
+in memory for replay to the handler before the remainder is spooled to a temp
+file (default 131072, 128 KiB). The module reads the whole body up front so the
+WAF can inspect it before the handler runs, then replays it; this bounds what
+that copy pins in worker memory. Separate from the engine's
+`SecRequestBodyInMemoryLimit`. Context: server config, `<VirtualHost>`, `<Location>`, `<Directory>`, `.htaccess`.
+
 ## How it works
 
 The module hooks into Apache's request processing:

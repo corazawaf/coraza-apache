@@ -148,6 +148,35 @@ check_post_body() {
     fi
 }
 
+# Upload a file as multipart/form-data and assert the status, a body pattern
+# and a minimum response size. For bodies that cross the in-memory replay
+# limit, where the tail is served from the spool file.
+check_upload_body() {
+    desc="$1"
+    url="$2"
+    path="$3"
+    expected="$4"
+    body_pattern="$5"
+    min_size="$6"
+
+    resp=$(curl -s --max-time 20 -w "\n%{http_code} %{size_download}" \
+        -F "file=@$path;type=text/plain" "$url")
+    meta=$(echo "$resp" | tail -1)
+    code=${meta%% *}
+    size=${meta#* }
+    out=$(echo "$resp" | sed '$d')
+
+    if [ "$code" = "$expected" ] && [ "$size" -ge "$min_size" ] \
+        && echo "$out" | grep -q "$body_pattern"; then
+        printf "  PASS  %s -> %s (%s bytes)\n" "$desc" "$code" "$size"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> %s (%s bytes, expected %s/>=%s, pattern %s)\n" \
+            "$desc" "$code" "$size" "$expected" "$min_size" "$body_pattern"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 clear_audit_log() {
     docker exec "$CONTAINER" truncate -s 0 /var/log/coraza/audit.log 2>/dev/null
 }
@@ -661,6 +690,15 @@ check_post_body "POST 20 KB body is delivered intact" \
 # replace the 405 default_handler gives a PUT to a static file.
 check_method "PUT static file with body: 405, not 400" \
     PUT "$URL/dir-protected/index.html" 'x=1' 405
+# A 300 KB upload crosses CorazaRequestBodyInMemoryLimit (64 KiB on /echo in
+# the test config, 128 KiB by default): the head is replayed from memory and
+# the tail from the spool file. Markers at both ends plus the size prove the
+# whole body reached the handler.
+upload=$(mktemp)
+{ printf 'SPOOL-HEAD'; head -c 300000 /dev/zero | tr '\0' 'B'; printf 'SPOOL-TAIL'; } > "$upload"
+check_upload_body "POST 300 KB multipart upload is delivered intact (spooled)" \
+    "$URL/echo" "$upload" 200 'SPOOL-HEADB*SPOOL-TAIL' 300000
+rm -f "$upload"
 echo ""
 
 if [ -n "$CONTAINER" ]; then

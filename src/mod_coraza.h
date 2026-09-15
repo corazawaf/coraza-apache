@@ -58,6 +58,7 @@ typedef struct {
     int                 has_rules;
     apr_array_header_t *rules;           /* of coraza_rule_entry_t */
     const char         *transaction_id;
+    apr_off_t           body_mem_limit;  /* -1=unset; replay bytes kept in RAM */
     coraza_waf_t        waf;             /* built in child_init */
     void               *merge_child;     /* stable child dir_conf for WAF caching */
 } coraza_dir_conf_t;
@@ -81,6 +82,15 @@ typedef struct {
  * flushed and the remainder streams through. Overridable at build time with
  * -DCORAZA_MAX_DELAYED_BODY=<bytes>.
  */
+/*
+ * How much of the request body fixups keeps in memory for the CORAZA_IN
+ * replay before spilling the rest to a temp file (CorazaRequestBodyInMemoryLimit).
+ * Same default as mod_security2's SecRequestBodyInMemoryLimit. Without a cap
+ * the saved copy is bounded only by LimitRequestBody (1 GiB by default), so
+ * concurrent large uploads could pin gigabytes in worker memory.
+ */
+#define CORAZA_DEFAULT_BODY_MEM_LIMIT (128 * 1024)   /* 128 KiB */
+
 #ifndef CORAZA_MAX_DELAYED_BODY
 #define CORAZA_MAX_DELAYED_BODY (1024 * 1024)   /* 1 MiB */
 #endif

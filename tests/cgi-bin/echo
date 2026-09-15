@@ -1,13 +1,22 @@
 #!/bin/sh
-# Echo endpoint for the request-body replay test (issue #34).
+# Echo endpoint for the request-body replay tests (issue #34).
 #
 # Writes the request body back verbatim so a test can assert on what the
 # handler actually received, not just on a status code. It reads stdin to EOF
 # on purpose rather than CONTENT_LENGTH bytes: if the replayed body is not
 # terminated by an EOS bucket the read blocks, and the test then fails on
 # curl's --max-time instead of passing on an empty body.
+#
+# All of stdin is drained into a temp file before any output is written.
+# mod_cgi (prefork) sends the whole request body to the script before it
+# reads the script's stdout, so echoing while reading deadlocks once the body
+# outgrows the pipe buffers; slurping first makes the test valid on both CGI
+# transports.
+body=$(mktemp)
+cat > "$body"
 /usr/bin/printf 'Content-Type: text/plain\r\n\r\n'
 /usr/bin/printf 'CONTENT_LENGTH=[%s]\n' "${CONTENT_LENGTH:-}"
 /usr/bin/printf 'BODY=['
-cat
+cat "$body"
 /usr/bin/printf ']\n'
+rm -f "$body"
