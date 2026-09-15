@@ -14,6 +14,89 @@
 #include "mod_coraza.h"
 
 /*
+ * Hands the handler the body the fixups hook already consumed.
+ *
+ * Buckets move out of ctx->saved_body as they are delivered, so a handler
+ * reading in chunks -- mod_cgid asks for HUGE_STRING_LEN at a time -- sees the
+ * body once and in order, then the EOS that fixups appended.
+ */
+static apr_status_t
+coraza_replay_saved_body(ap_filter_t *f, apr_bucket_brigade *bb,
+                         ap_input_mode_t mode, apr_read_type_e block,
+                         apr_off_t readbytes)
+{
+    coraza_request_ctx_t *ctx = f->ctx;
+    apr_bucket_brigade *saved = ctx->saved_body;
+    apr_bucket *stop;
+    apr_status_t rv;
+
+    /* Everything has been handed over: step aside and let the filter below
+     * answer. Returning APR_EOF here instead would be read as a failure --
+     * ap_discard_request_body() maps any non-APR_SUCCESS to 400, which turned
+     * the 405 that a PUT to a static path should get into a 400. */
+    if (APR_BRIGADE_EMPTY(saved)) {
+        ctx->saved_body = NULL;
+        ap_remove_input_filter(f);
+        return ap_get_brigade(f->next, bb, mode, block, readbytes);
+    }
+
+    if (mode == AP_MODE_EATCRLF) {
+        return ap_get_brigade(f->next, bb, mode, block, readbytes);
+    }
+
+    if (mode == AP_MODE_GETLINE) {
+        return apr_brigade_split_line(bb, saved, block, HUGE_STRING_LEN);
+    }
+
+    if (mode == AP_MODE_SPECULATIVE) {
+        apr_bucket *e;
+        apr_off_t seen = 0;
+
+        for (e = APR_BRIGADE_FIRST(saved);
+             e != APR_BRIGADE_SENTINEL(saved) && seen < readbytes;
+             e = APR_BUCKET_NEXT(e))
+        {
+            apr_bucket *copy;
+
+            if (apr_bucket_copy(e, &copy) != APR_SUCCESS) {
+                break;
+            }
+            APR_BRIGADE_INSERT_TAIL(bb, copy);
+            if (!APR_BUCKET_IS_METADATA(e)) {
+                seen += (apr_off_t)e->length;
+            }
+        }
+        return APR_SUCCESS;
+    }
+
+    /* AP_MODE_READBYTES and AP_MODE_EXHAUSTIVE. */
+    if (readbytes <= 0) {
+        APR_BRIGADE_CONCAT(bb, saved);
+        return APR_SUCCESS;
+    }
+
+    rv = apr_brigade_partition(saved, readbytes, &stop);
+    if (rv == APR_INCOMPLETE) {
+        /* Less left than asked for: hand over the remainder, EOS included. */
+        APR_BRIGADE_CONCAT(bb, saved);
+        return APR_SUCCESS;
+    }
+    if (rv != APR_SUCCESS) {
+        return rv;
+    }
+
+    while (APR_BRIGADE_FIRST(saved) != stop) {
+        apr_bucket *e = APR_BRIGADE_FIRST(saved);
+
+        APR_BUCKET_REMOVE(e);
+        APR_BRIGADE_INSERT_TAIL(bb, e);
+    }
+
+    return APR_SUCCESS;
+}
+
+
+/*
  * Input filter (fallback for streaming body inspection).
  * Normally the fixups hook reads the body proactively, making this filter
  * a no-op. It only activates if a content handler reads the body itself
@@ -28,6 +111,13 @@ coraza_input_filter(ap_filter_t *f, apr_bucket_brigade *bb,
     apr_status_t rv;
     apr_bucket *b;
     int ret;
+
+    /* The fixups hook read the body with ap_get_client_block(), which consumes
+     * the connection input. Replay the copy it kept, so the application behind
+     * the WAF still receives the body the client sent. */
+    if (ctx != NULL && ctx->saved_body != NULL && !ctx->intervention_triggered) {
+        return coraza_replay_saved_body(f, bb, mode, block, readbytes);
+    }
 
     /* Remove self if body was already read in fixups or intervention fired */
     if (ctx == NULL || ctx->intervention_triggered || ctx->phase2_done) {

@@ -118,6 +118,7 @@ typedef struct {
     apr_size_t pending_len;        /* bytes buffered while headers are delayed */
     int headers_delayed;           /* response held back pending body inspection */
     int phase2_done;               /* request body processed */
+    apr_bucket_brigade *saved_body; /* body read in fixups, replayed downstream */
     int phase3_done;               /* response headers processed */
     int phase4_done;               /* response body processed */
     int logged;                    /* audit log already emitted (prevents double-log) */
