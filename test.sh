@@ -149,15 +149,19 @@ check_post_body() {
 }
 
 # Upload a file as multipart/form-data and assert the status, a body pattern
-# and a minimum response size. For bodies that cross the in-memory replay
+# and the exact response size. For bodies that cross the in-memory replay
 # limit, where the tail is served from the spool file.
+#
+# The echo CGI reports the request-body length Apache gave it and echoes the
+# bytes it read, framed as "CONTENT_LENGTH=[n]\nBODY=[...]\n". The response
+# must therefore be exactly n + 26 + digits(n) bytes: a replay that drops or
+# truncates a bucket cannot pass on a lower bound.
 check_upload_body() {
     desc="$1"
     url="$2"
     path="$3"
     expected="$4"
     body_pattern="$5"
-    min_size="$6"
 
     resp=$(curl -s --max-time 20 -w "\n%{http_code} %{size_download}" \
         -F "file=@$path;type=text/plain" "$url")
@@ -165,14 +169,17 @@ check_upload_body() {
     code=${meta%% *}
     size=${meta#* }
     out=$(echo "$resp" | sed '$d')
+    n=$(printf '%s\n' "$out" | sed -n 's/^CONTENT_LENGTH=\[\([0-9][0-9]*\)\].*/\1/p' | head -1)
+    want=$(( ${n:-0} + 26 + ${#n} ))
 
-    if [ "$code" = "$expected" ] && [ "$size" -ge "$min_size" ] \
+    if [ "$code" = "$expected" ] && [ -n "$n" ] && [ "$size" -eq "$want" ] \
         && echo "$out" | grep -q "$body_pattern"; then
-        printf "  PASS  %s -> %s (%s bytes)\n" "$desc" "$code" "$size"
+        printf "  PASS  %s -> %s (%s bytes = CONTENT_LENGTH %s + framing)\n" \
+            "$desc" "$code" "$size" "$n"
         PASS=$((PASS + 1))
     else
-        printf "  FAIL  %s -> %s (%s bytes, expected %s/>=%s, pattern %s)\n" \
-            "$desc" "$code" "$size" "$expected" "$min_size" "$body_pattern"
+        printf "  FAIL  %s -> %s (%s bytes, expected %s/%s for CONTENT_LENGTH %s, pattern %s)\n" \
+            "$desc" "$code" "$size" "$expected" "$want" "${n:-?}" "$body_pattern"
         FAIL=$((FAIL + 1))
     fi
 }
@@ -692,12 +699,12 @@ check_method "PUT static file with body: 405, not 400" \
     PUT "$URL/dir-protected/index.html" 'x=1' 405
 # A 300 KB upload crosses CorazaRequestBodyInMemoryLimit (64 KiB on /echo in
 # the test config, 128 KiB by default): the head is replayed from memory and
-# the tail from the spool file. Markers at both ends plus the size prove the
-# whole body reached the handler.
+# the tail from the spool file. Markers at both ends prove ordering; the exact
+# size check in check_upload_body proves every byte reached the handler.
 upload=$(mktemp)
 { printf 'SPOOL-HEAD'; head -c 300000 /dev/zero | tr '\0' 'B'; printf 'SPOOL-TAIL'; } > "$upload"
 check_upload_body "POST 300 KB multipart upload is delivered intact (spooled)" \
-    "$URL/echo" "$upload" 200 'SPOOL-HEADB*SPOOL-TAIL' 300000
+    "$URL/echo" "$upload" 200 'SPOOL-HEADB*SPOOL-TAIL'
 rm -f "$upload"
 echo ""
 
