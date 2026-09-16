@@ -363,6 +363,48 @@ check_curl() {
     fi
 }
 
+# Send a raw request line and return the status code. curl cannot emit an
+# arbitrary HTTP version, so this speaks to the socket directly: nc where
+# available, bash's /dev/tcp otherwise. The request is piped straight in --
+# command substitution would strip the CRLFs that terminate it.
+raw_status() {
+    path="$1"
+    proto="$2"
+    hostport=${URL#http://}
+    hostport=${hostport%%/*}
+    host=${hostport%%:*}
+    port=${hostport##*:}
+    [ "$host" = "$port" ] && port=80
+
+    if command -v nc >/dev/null 2>&1; then
+        printf 'GET %s %s\r\nHost: %s\r\nConnection: close\r\n\r\n' \
+            "$path" "$proto" "$host" | nc -w 5 "$host" "$port" 2>/dev/null | head -1 | awk '{print $2}'
+    elif command -v bash >/dev/null 2>&1; then
+        bash -c 'exec 3<>"/dev/tcp/$1/$2"
+                 printf "GET %s %s\r\nHost: %s\r\nConnection: close\r\n\r\n" "$3" "$4" "$1" >&3
+                 timeout 5 head -1 <&3' _ "$host" "$port" "$path" "$proto" 2>/dev/null | awk '{print $2}'
+    else
+        echo "no-raw-client"
+    fi
+}
+
+# Assert the status of a raw request line, e.g. a protocol version curl cannot send.
+check_raw() {
+    desc="$1"
+    path="$2"
+    proto="$3"
+    expected="$4"
+
+    code=$(raw_status "$path" "$proto")
+    if [ "$code" = "$expected" ]; then
+        printf "  PASS  %s -> %s\n" "$desc" "$code"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> %s (expected %s)\n" "$desc" "${code:-none}" "$expected"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 # Fetch a streaming endpoint with a short timeout and assert whether a pattern
 # arrived. "present" = the stream reached the client (header delay was skipped);
 # "absent" = nothing streamed within the window (still buffered/delayed).
@@ -555,6 +597,14 @@ echo "--- Request protocol tests ---"
 # REQUEST_PROTOCOL must reach Coraza slash-delimited ("HTTP/1.1"), not bare "1.1".
 check_curl "Protocol: HTTP/1.1 matches REQUEST_PROTOCOL" "$URL/protocol-check" 403
 check_curl "Protocol: HTTP/1.0 does not match"           "$URL/protocol-check" 200 --http1.0
+# A version Apache does not recognise must reach REQUEST_PROTOCOL as it arrived.
+# Before the fix r->proto_num was mapped through an enum whose default is
+# HTTP/1.1, so HTTP/4.0 was indistinguishable from a normal request: the raw
+# rule could not match (200 instead of 406) and CRS 920430 could not enforce
+# the version policy on / (200 instead of 403).
+check_raw "Protocol: HTTP/4.0 reaches REQUEST_PROTOCOL verbatim" "/protocol-raw" "HTTP/4.0" 406
+check_raw "Protocol: HTTP/1.1 does not trip the raw rule"       "/protocol-raw" "HTTP/1.1" 200
+check_raw "Protocol: CRS 920430 rejects HTTP/4.0 on /"          "/"             "HTTP/4.0" 403
 echo ""
 
 echo "--- Large header inspection (length-narrowing guard) ---"
