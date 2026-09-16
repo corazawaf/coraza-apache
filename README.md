@@ -120,7 +120,10 @@ Setting `Coraza Off` in any context disables inspection for that scope.
 in memory for replay to the handler before the remainder is spooled to a temp
 file (default 131072, 128 KiB). The module reads the whole body up front so the
 WAF can inspect it before the handler runs, then replays it; this bounds what
-that copy pins in worker memory. Separate from the engine's
+that copy pins in worker memory. Disk use by the spool files is bounded per
+request by Apache's `LimitRequestBody` (1 GiB by default) and in aggregate by
+that times `MaxRequestWorkers` -- size `LimitRequestBody` accordingly, as for
+any module that spools request bodies. Separate from the engine's
 `SecRequestBodyInMemoryLimit`. Context: server config, `<VirtualHost>`, `<Location>`, `<Directory>`, `.htaccess`.
 
 ## How it works
