@@ -104,6 +104,21 @@ while custom rules return their configured status.
 Two isolated Locations (`/isolated-a`, `/isolated-b`) with different rule IDs.
 Verifies rules from one Location don't leak into another.
 
+### Request Protocol (5 tests)
+
+`REQUEST_PROTOCOL` must carry the version as the client sent it. `/protocol-check`
+matches `HTTP/1.1`; `/protocol-raw` matches `HTTP/4.0`, a version Apache does not
+know, which the module used to collapse onto `HTTP/1.1`. Raw request lines are
+sent over a socket because curl cannot emit arbitrary versions.
+
+| Test | Asserts |
+|------|---------|
+| HTTP/1.1 matches REQUEST_PROTOCOL | slash-delimited form reaches the engine (403) |
+| HTTP/1.0 does not match | `--http1.0` request is not mistaken for 1.1 (200) |
+| HTTP/4.0 reaches REQUEST_PROTOCOL verbatim | raw token matches `@streq HTTP/4.0` (406) |
+| HTTP/1.1 does not trip the raw rule | control on `/protocol-raw` (200) |
+| CRS 920430 rejects HTTP/4.0 on / | the version policy is enforceable through the connector (403) |
+
 ### Custom Error Pages (5 tests)
 
 `ErrorDocument 403` and `ErrorDocument 401` with `Coraza Off` on the error

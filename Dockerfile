@@ -187,6 +187,12 @@ RUN { \
     echo '<Location "/protocol-check">'; \
     echo '    SecRule REQUEST_PROTOCOL "@streq HTTP/1.1" "id:20800,phase:1,deny,status:403,log"'; \
     echo '</Location>'; \
+    echo '# A version Apache does not know must reach REQUEST_PROTOCOL as sent, not'; \
+    echo '# collapsed to HTTP/1.1. Phase-1 deny with a status CRS never uses, so a 406'; \
+    echo '# can only come from this rule seeing the raw token.'; \
+    echo '<Location "/protocol-raw">'; \
+    echo '    SecRule REQUEST_PROTOCOL "@streq HTTP/4.0" "id:20801,phase:1,deny,status:406,log"'; \
+    echo '</Location>'; \
     echo '# --- Large header inspection (cgo length-narrowing guard must not clip) ---'; \
     echo '<Location "/header-check">'; \
     echo '    SecRule REQUEST_HEADERS:X-Test "@contains BOOMHEADER" "id:20810,phase:1,deny,status:403,log"'; \
