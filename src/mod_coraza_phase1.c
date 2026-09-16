@@ -83,7 +83,17 @@ coraza_post_read_request(request_rec *r)
 
         /* Coraza expects the protocol in slash-delimited form (e.g. "HTTP/1.1"),
          * matching REQUEST_PROTOCOL; passing a bare "1.1" makes protocol rules
-         * miss. */
+         * miss.
+         *
+         * r->protocol is the token as it arrived, so prefer it: mapping
+         * r->proto_num through the enum below collapses every version Apache
+         * does not know onto "HTTP/1.1", and a rule whose whole job is to
+         * reject versions outside a policy -- CRS 920430,
+         * `REQUEST_PROTOCOL "!@within %{tx.allowed_http_versions}"` -- then has
+         * nothing left to reject. The enum stays as the fallback for the case
+         * where r->protocol is not set. (coraza-nginx has the same mapping and
+         * cannot do better: nginx refuses an unknown version in its own
+         * parser, so the string never reaches the module.) */
         switch (r->proto_num) {
         case HTTP_VERSION(0, 9):
             http_version = "HTTP/0.9";
@@ -100,6 +110,10 @@ coraza_post_read_request(request_rec *r)
         default:
             http_version = "HTTP/1.1";
             break;
+        }
+
+        if (r->protocol != NULL && *r->protocol != '\0') {
+            http_version = r->protocol;
         }
 
         coraza_process_uri(ctx->transaction,
