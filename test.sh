@@ -121,6 +121,69 @@ check_body() {
     fi
 }
 
+# POST a body and assert both the status and that the response body matches a
+# pattern. Bounded by --max-time: a replayed body that lacks its EOS leaves the
+# handler blocked on stdin, and that has to surface as a failure, not a hang.
+check_post_body() {
+    desc="$1"
+    url="$2"
+    ctype="$3"
+    body="$4"
+    expected="$5"
+    body_pattern="$6"
+
+    resp=$(curl -s --max-time 10 -w "\n%{http_code}" -X POST \
+        -H "Content-Type: $ctype" --data-binary "$body" "$url")
+    code=$(echo "$resp" | tail -1)
+    out=$(echo "$resp" | sed '$d')
+
+    if [ "$code" = "$expected" ] && echo "$out" | grep -q "$body_pattern"; then
+        printf "  PASS  %s -> %s\n" "$desc" "$code"
+        PASS=$((PASS + 1))
+    else
+        reason="status $code"
+        echo "$out" | grep -q "$body_pattern" || reason="$reason, body mismatch: $(echo "$out" | head -c 80)"
+        printf "  FAIL  %s -> %s (%s)\n" "$desc" "$code" "$reason"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+# Upload a file as multipart/form-data and assert the status, a body pattern
+# and the exact response size. For bodies that cross the in-memory replay
+# limit, where the tail is served from the spool file.
+#
+# The echo CGI reports the request-body length Apache gave it and echoes the
+# bytes it read, framed as "CONTENT_LENGTH=[n]\nBODY=[...]\n". The response
+# must therefore be exactly n + 26 + digits(n) bytes: a replay that drops or
+# truncates a bucket cannot pass on a lower bound.
+check_upload_body() {
+    desc="$1"
+    url="$2"
+    path="$3"
+    expected="$4"
+    body_pattern="$5"
+
+    resp=$(curl -s --max-time 20 -w "\n%{http_code} %{size_download}" \
+        -F "file=@$path;type=text/plain" "$url")
+    meta=$(echo "$resp" | tail -1)
+    code=${meta%% *}
+    size=${meta#* }
+    out=$(echo "$resp" | sed '$d')
+    n=$(printf '%s\n' "$out" | sed -n 's/^CONTENT_LENGTH=\[\([0-9][0-9]*\)\].*/\1/p' | head -1)
+    want=$(( ${n:-0} + 26 + ${#n} ))
+
+    if [ "$code" = "$expected" ] && [ -n "$n" ] && [ "$size" -eq "$want" ] \
+        && echo "$out" | grep -q "$body_pattern"; then
+        printf "  PASS  %s -> %s (%s bytes = CONTENT_LENGTH %s + framing)\n" \
+            "$desc" "$code" "$size" "$n"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> %s (%s bytes, expected %s/%s for CONTENT_LENGTH %s, pattern %s)\n" \
+            "$desc" "$code" "$size" "$expected" "$want" "${n:-?}" "$body_pattern"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 clear_audit_log() {
     docker exec "$CONTAINER" truncate -s 0 /var/log/coraza/audit.log 2>/dev/null
 }
@@ -617,6 +680,34 @@ check "Main server: SQLi still blocked"      "$URL/?id=1%20OR%201=1"            
 echo ""
 
 # Audit log tests (require --container)
+# --- Request body reaches the handler (issue #34) ---
+# The fixups hook consumes the body to inspect it; CORAZA_IN must replay the
+# copy to the handler. The echo CGI reports what it actually received.
+echo "--- Request body reaches the handler (issue #34) ---"
+check_post_body "POST JSON body is delivered to the handler" \
+    "$URL/echo" "application/json" '{"body": "hello"}' 200 'BODY=\[{"body": "hello"}\]'
+# A 20 KB body spans several 8 KiB fixups reads: the replay must hand over
+# every bucket, in order, and then the EOS. Sent as a form post because CRS's
+# default allowed_request_content_type list does not include text/plain.
+big="data=$(head -c 20000 /dev/zero | tr '\0' 'A')"
+check_post_body "POST 20 KB body is delivered intact" \
+    "$URL/echo" "application/x-www-form-urlencoded" "$big" 200 'BODY=\[data=A\{20000\}\]'
+# Once the replay is exhausted the filter must delegate, not return APR_EOF:
+# ap_discard_request_body() turns any non-success into a 400, which would
+# replace the 405 default_handler gives a PUT to a static file.
+check_method "PUT static file with body: 405, not 400" \
+    PUT "$URL/dir-protected/index.html" 'x=1' 405
+# A 300 KB upload crosses CorazaRequestBodyInMemoryLimit (64 KiB on /echo in
+# the test config, 128 KiB by default): the head is replayed from memory and
+# the tail from the spool file. Markers at both ends prove ordering; the exact
+# size check in check_upload_body proves every byte reached the handler.
+upload=$(mktemp)
+{ printf 'SPOOL-HEAD'; head -c 300000 /dev/zero | tr '\0' 'B'; printf 'SPOOL-TAIL'; } > "$upload"
+check_upload_body "POST 300 KB multipart upload is delivered intact (spooled)" \
+    "$URL/echo" "$upload" 200 'SPOOL-HEADB*SPOOL-TAIL'
+rm -f "$upload"
+echo ""
+
 if [ -n "$CONTAINER" ]; then
     echo "--- Delayed response cap log ---"
     # The large delayed response above must have tripped the cap's early flush.
