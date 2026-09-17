@@ -159,7 +159,7 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
-### Crash and worker-health sweep (39 tests, requires `--container`)
+### Crash and worker-health sweep (39 tests: 38 sweeps + 1 self-test, requires `--container`)
 
 Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
 that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
@@ -169,6 +169,19 @@ runs after every section, reports only lines new since the previous sweep (so
 the failing section is named), and probes `/server-info` to catch a wedged
 server. A self-test injects a fake worker-exit line into httpd's stderr and
 requires the sweep to detect it, so the oracle is proven live, not assumed.
+
+### auditlog action with RelevantOnly (3 tests, requires `--container`)
+
+`SecAuditEngine RelevantOnly` with a rule carrying `auditlog` / `noauditlog`:
+a matching request is logged, a non-matching one is not, and `noauditlog`
+suppresses the entry even on a match (per-location audit files, checked via
+`docker exec`).
+
+### Delayed response cap log (1 test, requires `--container`)
+
+Companion to the delayed-response cap tests above: the container log must
+carry the "flushing headers early" line when the 4 MiB body crosses
+`CORAZA_MAX_DELAYED_BODY`.
 
 ### Request body replay (4 tests)
 

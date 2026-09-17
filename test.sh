@@ -415,22 +415,35 @@ check_raw() {
 # them. Also probes /server-info so a wedged server is caught, not just a
 # crashed one. No-op without --container (nothing to read).
 CRASH_SEEN=0
+# Returns non-zero only when `docker logs` itself fails (wrong name, daemon
+# down): /bin/sh has no pipefail, so a plain pipeline would let grep turn a
+# failed read into "zero matching lines" and every sweep would pass vacuously.
 crash_lines() {
-    docker logs "$CONTAINER" 2>&1 \
+    logs=$(docker logs "$CONTAINER" 2>&1) || return 1
+    printf '%s\n' "$logs" \
         | grep -E 'exit signal|AH00052|AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer'
+    return 0
 }
 # Baseline: `docker logs` keeps everything since the container started, including
 # the line the self-test injects, so a second run against the same container
 # (the graceful-restart scenario in TESTS.md) must not re-report it. Each run
 # only reports what it caused itself.
 if [ -n "$CONTAINER" ]; then
-    CRASH_SEEN=$(crash_lines | grep -c .)
+    if ! lines=$(crash_lines); then
+        echo "ERROR: cannot read docker logs for container '$CONTAINER'; the crash sweep would be vacuous" >&2
+        exit 2
+    fi
+    CRASH_SEEN=$(printf '%s' "$lines" | grep -c .)
 fi
 check_no_crash() {
     desc="$1"
     [ -n "$CONTAINER" ] || return 0
 
-    lines=$(crash_lines)
+    if ! lines=$(crash_lines); then
+        printf "  FAIL  Crash sweep: %s (docker logs unreadable for '%s')\n" "$desc" "$CONTAINER"
+        FAIL=$((FAIL + 1))
+        return
+    fi
     count=$(printf '%s' "$lines" | grep -c .)
     health=$(curl -s -o /dev/null --max-time 10 -w "%{http_code}" "$URL/server-info")
 
@@ -919,14 +932,17 @@ if [ -n "$CONTAINER" ]; then
     # injected line does not fail any later sweep.
     docker exec "$CONTAINER" sh -c 'echo "[$(date)] [mpm_event:notice] [pid 1] AH00052: child pid 99999 exit signal Segmentation fault (11) (injected by test.sh self-test)" > /proc/1/fd/2'
     sleep 1
-    if [ "$(crash_lines | grep -c .)" -gt "$CRASH_SEEN" ]; then
+    if ! lines=$(crash_lines); then
+        printf "  FAIL  Crash sweep self-test: docker logs unreadable\n"
+        FAIL=$((FAIL + 1))
+    elif [ "$(printf '%s' "$lines" | grep -c .)" -gt "$CRASH_SEEN" ]; then
         printf "  PASS  Crash sweep self-test: injected worker-exit line is detected\n"
         PASS=$((PASS + 1))
     else
         printf "  FAIL  Crash sweep self-test: injected worker-exit line NOT detected\n"
         FAIL=$((FAIL + 1))
     fi
-    CRASH_SEEN=$(crash_lines | grep -c .)
+    CRASH_SEEN=$(printf '%s' "$lines" | grep -c .)
     echo ""
 else
     echo "--- Audit log tests (skipped: use --container=NAME) ---"
