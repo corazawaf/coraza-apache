@@ -624,7 +624,7 @@ echo "--- Source contract: libcoraza strings are released through libcoraza ---"
 check_source "coraza_free_string is bound as a required symbol" mod_coraza_dl.c 'DL_SYM\(dl_free_string, *coraza_free_string\)'
 check_source "build_waf releases the coraza_new_waf error string" mod_coraza.c 'coraza_free_string\(error\)'
 check_source "empty-WAF fallback releases the coraza_new_waf error string" mod_coraza.c 'coraza_free_string\(err\)'
-check_source "no libc free() on a libcoraza string" mod_coraza.c 'free\((error|err)\)' !
+check_source "no libc free() on a libcoraza string" mod_coraza.c '(^|[^[:alnum:]_])free[[:space:]]*\([[:space:]]*(error|err)[[:space:]]*\)' !
 echo ""
 
 echo "--- Request protocol tests ---"
