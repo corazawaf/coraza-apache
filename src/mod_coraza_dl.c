@@ -46,6 +46,7 @@ typedef int                  (*fn_coraza_update_status_code)(coraza_transaction_
 typedef int                  (*fn_coraza_add_get_args)(coraza_transaction_t, char *, char *);
 typedef int                  (*fn_coraza_is_response_body_processable)(coraza_transaction_t);
 typedef int                  (*fn_coraza_version_num)(void);
+typedef void                 (*fn_coraza_free_string)(char *);
 
 /* ------------------------------------------------------------------ */
 /* Static function pointers -- set once by coraza_dl_open()            */
@@ -57,6 +58,7 @@ static fn_coraza_rules_add_file          dl_rules_add_file;
 static fn_coraza_free_waf_config         dl_free_waf_config;
 static fn_coraza_new_waf                 dl_new_waf;
 static fn_coraza_free_waf                dl_free_waf;
+static fn_coraza_free_string             dl_free_string;
 static fn_coraza_rules_count             dl_rules_count;
 static fn_coraza_rules_merge             dl_rules_merge;
 static fn_coraza_new_transaction         dl_new_transaction;
@@ -129,6 +131,7 @@ coraza_dl_open(server_rec *s)
     DL_SYM(dl_free_waf_config,          coraza_free_waf_config);
     DL_SYM(dl_new_waf,                  coraza_new_waf);
     DL_SYM(dl_free_waf,                 coraza_free_waf);
+    DL_SYM(dl_free_string,              coraza_free_string);
     DL_SYM(dl_rules_count,              coraza_rules_count);
     DL_SYM(dl_rules_merge,              coraza_rules_merge);
     DL_SYM(dl_new_transaction,          coraza_new_transaction);
@@ -237,6 +240,14 @@ coraza_waf_t coraza_new_waf(coraza_waf_config_t config, char **err)
 int coraza_free_waf(coraza_waf_t w)
 {
     return dl_free_waf(w);
+}
+
+/* Strings libcoraza hands back (the coraza_new_waf error reason) are
+ * allocated on the Go side and must be released through libcoraza, never
+ * with libc free() -- allocator mismatch, per the libcoraza docs. */
+void coraza_free_string(char *s)
+{
+    dl_free_string(s);
 }
 
 int coraza_rules_count(coraza_waf_t w)

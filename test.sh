@@ -363,6 +363,30 @@ check_curl() {
     fi
 }
 
+# Source-contract check: assert a pattern in a module source file. The suite
+# runs from the repository (test.sh sits at its root), so this pins things the
+# black-box tests cannot observe, such as a freed string. \"!\" negates.
+SRC_DIR=$(dirname "$0")/src
+check_source() {
+    desc="$1"
+    file="$2"
+    pattern="$3"
+    negate="$4"
+
+    if [ "$negate" = "!" ]; then
+        if ! grep -qE "$pattern" "$SRC_DIR/$file"; then ok=true; else ok=false; fi
+    else
+        if grep -qE "$pattern" "$SRC_DIR/$file"; then ok=true; else ok=false; fi
+    fi
+    if $ok; then
+        printf "  PASS  %s\n" "$desc"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s (pattern '%s' %sin %s)\n" "$desc" "$pattern" "$([ "$negate" = "!" ] && echo "found " || echo "not ")" "$file"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 # Send a raw request line and return the status code. curl cannot emit an
 # arbitrary HTTP version, so this speaks to the socket directly: nc where
 # available, bash's /dev/tcp otherwise. The request is piped straight in --
@@ -591,6 +615,16 @@ check "Phase 1: deny on ARGS"         "$URL/phase1?action=block403"             
 check "Phase 1: pass clean"           "$URL/phase1?action=safe"                   200
 check_post "Phase 2: deny on body"    "$URL/phase2" "PHASE2ATTACK"                403
 check_post "Phase 2: pass clean"      "$URL/phase2" "cleandata"                   200
+echo ""
+
+echo "--- Source contract: libcoraza strings are released through libcoraza ---"
+# coraza_new_waf() hands back a Go-allocated reason string on failure. Both
+# call sites must release it with coraza_free_string() (never libc free(),
+# allocator mismatch), and the symbol must be bound as required.
+check_source "coraza_free_string is bound as a required symbol" mod_coraza_dl.c 'DL_SYM\(dl_free_string, *coraza_free_string\)'
+check_source "build_waf releases the coraza_new_waf error string" mod_coraza.c 'coraza_free_string\(error\)'
+check_source "empty-WAF fallback releases the coraza_new_waf error string" mod_coraza.c 'coraza_free_string\(err\)'
+check_source "no libc free() on a libcoraza string" mod_coraza.c 'free\((error|err)\)' !
 echo ""
 
 echo "--- Request protocol tests ---"

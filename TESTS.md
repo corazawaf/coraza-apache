@@ -104,6 +104,14 @@ while custom rules return their configured status.
 Two isolated Locations (`/isolated-a`, `/isolated-b`) with different rule IDs.
 Verifies rules from one Location don't leak into another.
 
+### Source contract (4 tests)
+
+Host-side greps over `src/` for properties the black-box suite cannot observe:
+`coraza_free_string` is bound as a required symbol, both `coraza_new_waf()` call
+sites release the Go-allocated error string through it, and no libc `free()`
+touches those strings (allocator mismatch, per the libcoraza docs). Totals in
+this file are reconciled once #56 and this change have both landed.
+
 ### Request Protocol (5 tests)
 
 `REQUEST_PROTOCOL` must carry the version as the client sent it. `/protocol-check`
