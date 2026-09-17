@@ -419,6 +419,13 @@ crash_lines() {
     docker logs "$CONTAINER" 2>&1 \
         | grep -E 'exit signal|AH00052|AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer'
 }
+# Baseline: `docker logs` keeps everything since the container started, including
+# the line the self-test injects, so a second run against the same container
+# (the graceful-restart scenario in TESTS.md) must not re-report it. Each run
+# only reports what it caused itself.
+if [ -n "$CONTAINER" ]; then
+    CRASH_SEEN=$(crash_lines | grep -c .)
+fi
 check_no_crash() {
     desc="$1"
     [ -n "$CONTAINER" ] || return 0
