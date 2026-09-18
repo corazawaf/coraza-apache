@@ -429,26 +429,6 @@ check_raw() {
     fi
 }
 
-<<<<<<< HEAD
-# Same, scoped to one function: the body runs from the line that starts with
-# the function name (K&R style, return type on the previous line) to the next
-# closing brace in column 0. Binds an assertion to the function that must
-# contain it, so a call moved elsewhere in the file no longer satisfies it.
-check_source_in_func() {
-    desc="$1"
-    file="$2"
-    func="$3"
-    pattern="$4"
-
-    if awk -v fn="$func" 'index($0, fn "(") == 1 {f=1} f {print} f && /^}$/ {exit}' "$SRC_DIR/$file" \
-        | grep -qE "$pattern"; then
-        printf "  PASS  %s\n" "$desc"
-        PASS=$((PASS + 1))
-    else
-        printf "  FAIL  %s (pattern '%s' not in %s() of %s)\n" "$desc" "$pattern" "$func" "$file"
-        FAIL=$((FAIL + 1))
-    fi
-=======
 # Crash and worker-health sweep. Apache logs to the container's stderr
 # (ErrorLog /proc/self/fd/2), so a dying worker shows up in `docker logs` as
 # the MPM's "AH00052: child pid N exit signal ..." line, and a sanitizer
@@ -502,7 +482,26 @@ check_no_crash() {
         FAIL=$((FAIL + 1))
     fi
     CRASH_SEEN=$count
->>>>>>> refs/remotes/upstream/main
+}
+
+# Same, scoped to one function: the body runs from the line that starts with
+# the function name (K&R style, return type on the previous line) to the next
+# closing brace in column 0. Binds an assertion to the function that must
+# contain it, so a call moved elsewhere in the file no longer satisfies it.
+check_source_in_func() {
+    desc="$1"
+    file="$2"
+    func="$3"
+    pattern="$4"
+
+    if awk -v fn="$func" 'index($0, fn "(") == 1 {f=1} f {print} f && /^}$/ {exit}' "$SRC_DIR/$file" \
+        | grep -qE "$pattern"; then
+        printf "  PASS  %s\n" "$desc"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s (pattern '%s' not in %s() of %s)\n" "$desc" "$pattern" "$func" "$file"
+        FAIL=$((FAIL + 1))
+    fi
 }
 
 # Fetch a streaming endpoint with a short timeout and assert whether a pattern
