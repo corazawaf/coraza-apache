@@ -429,6 +429,26 @@ check_raw() {
     fi
 }
 
+# Same, scoped to one function: the body runs from the line that starts with
+# the function name (K&R style, return type on the previous line) to the next
+# closing brace in column 0. Binds an assertion to the function that must
+# contain it, so a call moved elsewhere in the file no longer satisfies it.
+check_source_in_func() {
+    desc="$1"
+    file="$2"
+    func="$3"
+    pattern="$4"
+
+    if awk -v fn="$func" 'index($0, fn "(") == 1 {f=1} f {print} f && /^}$/ {exit}' "$SRC_DIR/$file" \
+        | grep -qE "$pattern"; then
+        printf "  PASS  %s\n" "$desc"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s (pattern '%s' not in %s() of %s)\n" "$desc" "$pattern" "$func" "$file"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 # Fetch a streaming endpoint with a short timeout and assert whether a pattern
 # arrived. "present" = the stream reached the client (header delay was skipped);
 # "absent" = nothing streamed within the window (still buffered/delayed).
@@ -622,8 +642,8 @@ echo "--- Source contract: libcoraza strings are released through libcoraza ---"
 # call sites must release it with coraza_free_string() (never libc free(),
 # allocator mismatch), and the symbol must be bound as required.
 check_source "coraza_free_string is bound as a required symbol" mod_coraza_dl.c 'DL_SYM\(dl_free_string, *coraza_free_string\)'
-check_source "build_waf releases the coraza_new_waf error string" mod_coraza.c 'coraza_free_string\(error\)'
-check_source "empty-WAF fallback releases the coraza_new_waf error string" mod_coraza.c 'coraza_free_string\(err\)'
+check_source_in_func "build_waf releases the coraza_new_waf error string" mod_coraza.c coraza_build_waf 'coraza_free_string\(error\)'
+check_source_in_func "empty-WAF fallback releases the coraza_new_waf error string" mod_coraza.c coraza_child_init 'coraza_free_string\(err\)'
 check_source "no libc free() on a libcoraza string" mod_coraza.c '(^|[^[:alnum:]_])free[[:space:]]*\([[:space:]]*(error|err)[[:space:]]*\)' !
 echo ""
 

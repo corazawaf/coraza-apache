@@ -108,7 +108,8 @@ Verifies rules from one Location don't leak into another.
 
 Host-side greps over `src/` for properties the black-box suite cannot observe:
 `coraza_free_string` is bound as a required symbol, both `coraza_new_waf()` call
-sites release the Go-allocated error string through it, and no libc `free()`
+sites release the Go-allocated error string through it (each check scoped to its
+function, `coraza_build_waf` and `coraza_child_init`), and no libc `free()`
 touches those strings (allocator mismatch, per the libcoraza docs). Totals in
 this file are reconciled once #56 and this change have both landed.
 
