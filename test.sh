@@ -405,6 +405,61 @@ check_raw() {
     fi
 }
 
+# Crash and worker-health sweep. Apache logs to the container's stderr
+# (ErrorLog /proc/self/fd/2), so a dying worker shows up in `docker logs` as
+# the MPM's "AH00052: child pid N exit signal ..." line, and a sanitizer
+# build prints its report there too. A test that kills a worker and gets its
+# 200 from the next one would otherwise pass unnoticed, so this runs after
+# every section. `docker logs` is cumulative: only lines that appeared since
+# the previous sweep are reported, which points at the section that caused
+# them. Also probes /server-info so a wedged server is caught, not just a
+# crashed one. No-op without --container (nothing to read).
+CRASH_SEEN=0
+# Returns non-zero only when `docker logs` itself fails (wrong name, daemon
+# down): /bin/sh has no pipefail, so a plain pipeline would let grep turn a
+# failed read into "zero matching lines" and every sweep would pass vacuously.
+crash_lines() {
+    logs=$(docker logs "$CONTAINER" 2>&1) || return 1
+    printf '%s\n' "$logs" \
+        | grep -E 'exit signal|AH00052|AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer'
+    return 0
+}
+# Baseline: `docker logs` keeps everything since the container started, including
+# the line the self-test injects, so a second run against the same container
+# (the graceful-restart scenario in TESTS.md) must not re-report it. Each run
+# only reports what it caused itself.
+if [ -n "$CONTAINER" ]; then
+    if ! lines=$(crash_lines); then
+        echo "ERROR: cannot read docker logs for container '$CONTAINER'; the crash sweep would be vacuous" >&2
+        exit 2
+    fi
+    CRASH_SEEN=$(printf '%s' "$lines" | grep -c .)
+fi
+check_no_crash() {
+    desc="$1"
+    [ -n "$CONTAINER" ] || return 0
+
+    if ! lines=$(crash_lines); then
+        printf "  FAIL  Crash sweep: %s (docker logs unreadable for '%s')\n" "$desc" "$CONTAINER"
+        FAIL=$((FAIL + 1))
+        return
+    fi
+    count=$(printf '%s' "$lines" | grep -c .)
+    health=$(curl -s -o /dev/null --max-time 10 -w "%{http_code}" "$URL/server-info")
+
+    if [ "$count" -le "$CRASH_SEEN" ] && [ "$health" = "200" ]; then
+        printf "  PASS  Crash sweep: %s\n" "$desc"
+        PASS=$((PASS + 1))
+    else
+        reason=""
+        [ "$count" -gt "$CRASH_SEEN" ] && reason="worker exit/sanitizer: $(printf '%s\n' "$lines" | tail -n +$((CRASH_SEEN + 1)) | head -1 | cut -c1-100)"
+        [ "$health" != "200" ] && { [ -n "$reason" ] && reason="$reason; "; reason="${reason}server-info returned ${health:-nothing}"; }
+        printf "  FAIL  Crash sweep: %s (%s)\n" "$desc" "$reason"
+        FAIL=$((FAIL + 1))
+    fi
+    CRASH_SEEN=$count
+}
+
 # Fetch a streaming endpoint with a short timeout and assert whether a pattern
 # arrived. "present" = the stream reached the client (header delay was skipped);
 # "absent" = nothing streamed within the window (still buffered/delayed).
@@ -497,6 +552,7 @@ echo "--- Normal requests (expect 200) ---"
 check "GET /"                          "$URL/"              200
 check "GET /hello"                     "$URL/hello"         200
 check "GET /page?name=john"            "$URL/page?name=john" 200
+check_no_crash "Normal requests (expect 200)"
 echo ""
 
 echo "--- SQL injection (expect 403) ---"
@@ -504,43 +560,51 @@ check "SQLi: OR 1=1"                  "$URL/?id=1%20OR%201=1"                   
 check "SQLi: UNION SELECT"            "$URL/?id=1%20UNION%20SELECT%201,2,3"      403
 check "SQLi: single quote"            "$URL/?name=admin%27%20OR%20%271%27=%271"  403
 check "SQLi: DROP TABLE"              "$URL/?q=1;DROP%20TABLE%20users"            403
+check_no_crash "SQL injection (expect 403)"
 echo ""
 
 echo "--- XSS (expect 403) ---"
 check "XSS: script tag"               "$URL/?q=<script>alert(1)</script>"        403
 check "XSS: img onerror"              "$URL/?q=<img%20src=x%20onerror=alert(1)>" 403
 check "XSS: svg onload"               "$URL/?q=<svg%20onload=alert(1)>"          403
+check_no_crash "XSS (expect 403)"
 echo ""
 
 echo "--- Path traversal / LFI (expect 403) ---"
 check "LFI: etc/passwd"               "$URL/?file=../../../etc/passwd"           403
 check "LFI: encoded dots"             "$URL/?file=..%2f..%2f..%2fetc%2fpasswd"  403
+check_no_crash "Path traversal / LFI (expect 403)"
 echo ""
 
 echo "--- Remote command execution (expect 403) ---"
 check "RCE: shell command"            "$URL/?cmd=;cat%20/etc/passwd"             403
 check "RCE: pipe command"             "$URL/?cmd=|ls%20-la"                      403
+check_no_crash "Remote command execution (expect 403)"
 echo ""
 
 echo "--- POST normal requests (expect 200) ---"
 check_post "POST normal form"         "$URL/api" "name=john&age=30"              200
 check_post "POST normal JSON"         "$URL/api" '{"user":"john","action":"login"}' 200
+check_no_crash "POST normal requests (expect 200)"
 echo ""
 
 echo "--- POST SQL injection (expect 403) ---"
 check_post "POST SQLi: OR 1=1"        "$URL/api" "id=1 OR 1=1"                  403
 check_post "POST SQLi: UNION SELECT"  "$URL/api" "id=1 UNION SELECT 1,2,3"      403
 check_post "POST SQLi: DROP TABLE"    "$URL/api" "q=1;DROP TABLE users"          403
+check_no_crash "POST SQL injection (expect 403)"
 echo ""
 
 echo "--- POST XSS (expect 403) ---"
 check_post "POST XSS: script tag"     "$URL/api" "q=<script>alert(1)</script>"   403
 check_post "POST XSS: img onerror"    "$URL/api" "q=<img src=x onerror=alert(1)>" 403
+check_no_crash "POST XSS (expect 403)"
 echo ""
 
 echo "--- POST RCE (expect 403) ---"
 check_post "POST RCE: shell cmd"      "$URL/api" "cmd=;cat /etc/passwd"          403
 check_post "POST RCE: pipe cmd"       "$URL/api" "cmd=|ls -la"                   403
+check_no_crash "POST RCE (expect 403)"
 echo ""
 
 echo "--- PUT body tests (clean=405: WAF passes, Apache rejects method) ---"
@@ -552,6 +616,7 @@ check_method "PUT Phase 2: deny body"       "PUT" "$URL/phase2" "PHASE2ATTACK"  
 check_method "PUT Phase 2: pass clean"      "PUT" "$URL/phase2" "cleandata"                  405
 check_method_large "PUT body limit reject"  "PUT" "$URL/bodylimit-reject/" 200               413
 check_method "PUT body limit partial"       "PUT" "$URL/bodylimit-partial/" "id=1 OR 1=1"    403
+check_no_crash "PUT body tests (clean=405: WAF passes, Apache rejects method)"
 echo ""
 
 echo "--- DELETE body tests (clean=405: WAF passes, Apache rejects method) ---"
@@ -563,6 +628,7 @@ check_method "DELETE Phase 2: deny body"    "DELETE" "$URL/phase2" "PHASE2ATTACK
 check_method "DELETE Phase 2: pass clean"   "DELETE" "$URL/phase2" "cleandata"                405
 check_method_large "DELETE body limit reject" "DELETE" "$URL/bodylimit-reject/" 200           413
 check_method "DELETE body limit partial"    "DELETE" "$URL/bodylimit-partial/" "id=1 OR 1=1"  403
+check_no_crash "DELETE body tests (clean=405: WAF passes, Apache rejects method)"
 echo ""
 
 echo "--- <Directory> tests ---"
@@ -571,6 +637,7 @@ check "Dir: custom rule blocks"       "$URL/dir-protected/?block=yes"           
 check "Dir: custom rule allows"       "$URL/dir-protected/?block=no"              200
 check "Dir: Coraza Off normal"        "$URL/dir-disabled/"                        200
 check "Dir: Coraza Off SQLi pass"     "$URL/dir-disabled/?id=1%20OR%201=1"        200
+check_no_crash "<Directory> tests"
 echo ""
 
 echo "--- .htaccess tests ---"
@@ -578,12 +645,14 @@ check "htaccess: normal allowed"      "$URL/htaccess-protected/"                
 check "htaccess: custom rule blocks"  "$URL/htaccess-protected/?block=yes"        403
 check "htaccess: Coraza Off normal"   "$URL/htaccess-disabled/"                   200
 check "htaccess: Coraza Off SQLi"     "$URL/htaccess-disabled/?id=1%20OR%201=1"   200
+check_no_crash ".htaccess tests"
 echo ""
 
 echo "--- Config inheritance (CRS rules in Directory/.htaccess) ---"
 check "Dir: CRS SQLi inherited"       "$URL/dir-protected/?id=1%20OR%201=1"       403
 check "htaccess: CRS SQLi inherited"  "$URL/htaccess-protected/?id=1%20OR%201=1"  403
 check_post "Dir: POST body RCE"       "$URL/dir-protected/" "cmd=;cat /etc/passwd" 403
+check_no_crash "Config inheritance (CRS rules in Directory/.htaccess)"
 echo ""
 
 echo "--- Per-phase tests (1+2) ---"
@@ -591,6 +660,7 @@ check "Phase 1: deny on ARGS"         "$URL/phase1?action=block403"             
 check "Phase 1: pass clean"           "$URL/phase1?action=safe"                   200
 check_post "Phase 2: deny on body"    "$URL/phase2" "PHASE2ATTACK"                403
 check_post "Phase 2: pass clean"      "$URL/phase2" "cleandata"                   200
+check_no_crash "Per-phase tests (1+2)"
 echo ""
 
 echo "--- Request protocol tests ---"
@@ -605,6 +675,7 @@ check_curl "Protocol: HTTP/1.0 does not match"           "$URL/protocol-check" 2
 check_raw "Protocol: HTTP/4.0 reaches REQUEST_PROTOCOL verbatim" "/protocol-raw" "HTTP/4.0" 406
 check_raw "Protocol: HTTP/1.1 does not trip the raw rule"       "/protocol-raw" "HTTP/1.1" 200
 check_raw "Protocol: CRS 920430 rejects HTTP/4.0 on /"          "/"             "HTTP/4.0" 403
+check_no_crash "Request protocol tests"
 echo ""
 
 echo "--- Large header inspection (length-narrowing guard) ---"
@@ -614,6 +685,7 @@ big_hdr="$(printf 'A%.0s' $(seq 1 6000))BOOMHEADER"
 pad_hdr="$(printf 'A%.0s' $(seq 1 6000))"
 check_curl "Large header: trigger at end is inspected" "$URL/header-check" 403 -H "X-Test: $big_hdr"
 check_curl "Large header: padding only is not clipped" "$URL/header-check" 200 -H "X-Test: $pad_hdr"
+check_no_crash "Large header inspection (length-narrowing guard)"
 echo ""
 
 echo "--- Response phase tests (3+4) ---"
@@ -621,6 +693,7 @@ check "Phase 3: deny on Content-Type"       "$URL/phase3"                       
 check "Phase 3: pass no match"              "$URL/phase3-pass"                     200
 check "Phase 4: deny on body content"       "$URL/phase4"                          403
 check "Phase 4: pass no match"              "$URL/phase4-pass"                     200
+check_no_crash "Response phase tests (3+4)"
 echo ""
 
 echo "--- SSE streaming (header-delay skip) ---"
@@ -630,6 +703,7 @@ echo "--- SSE streaming (header-delay skip) ---"
 check_stream "SSE: stream reaches client (not delayed)"   "$URL/sse-stream"          "data: tick" present
 check_stream "SSE near-miss: text/event-streamx delayed"  "$URL/sse-nearmiss"        "data: tick" absent
 check_curl   "SSE: phase-1 rule still blocks (no bypass)" "$URL/sse-stream?attack=1" 403 --max-time 5
+check_no_crash "SSE streaming (header-delay skip)"
 echo ""
 
 echo "--- Delayed response cap (bound worker memory) ---"
@@ -637,6 +711,7 @@ echo "--- Delayed response cap (bound worker memory) ---"
 # and streams the rest rather than buffering the whole body (or truncating it).
 check      "Large delayed response: completes 200"    "$URL/bulk-delayed"  200
 check_size "Large delayed response: full 4 MiB body"  "$URL/bulk-delayed"  4194304
+check_no_crash "Delayed response cap (bound worker memory)"
 echo ""
 
 echo "--- Config merging tests ---"
@@ -646,6 +721,7 @@ check_post "Body off: SQLi passes"    "$URL/merge-bodyaccess-off/" "id=1 OR 1=1"
 check "Inherited: CRS blocks SQLi"    "$URL/merge-inherited/?id=1%20OR%201=1"     403
 check "Inherited: local rule blocks"  "$URL/merge-inherited/?localonly=yes"        403
 check "Inherited: local rule passes"  "$URL/merge-inherited/?localonly=no"         200
+check_no_crash "Config merging tests"
 echo ""
 
 echo "--- Request body limit tests ---"
@@ -655,6 +731,7 @@ check_post_large "Reject: at-limit"   "$URL/bodylimit-reject/" 127              
 check_post "Partial: small body OK"   "$URL/bodylimit-partial/" "short"           200
 check_post_large "Partial: large OK"  "$URL/bodylimit-partial/" 200              200
 check_post "Partial: attack found"    "$URL/bodylimit-partial/" "id=1 OR 1=1"     403
+check_no_crash "Request body limit tests"
 echo ""
 
 echo "--- Inherited body limit tests ---"
@@ -663,6 +740,7 @@ check_method_large "Inherited: POST large blocked"   "POST"   "$URL/bodylimit-in
 check_method_large "Inherited: PUT large blocked"    "PUT"    "$URL/bodylimit-inherited/" 200 413
 check_method_large "Inherited: DELETE large blocked"  "DELETE" "$URL/bodylimit-inherited/" 200 413
 check_method_large "Override: larger limit passes"   "POST"   "$URL/bodylimit-override/" 200  200
+check_no_crash "Inherited body limit tests"
 echo ""
 
 echo "--- Scoring tests ---"
@@ -671,17 +749,20 @@ check "Score abs: 2 arg block"        "$URL/scoring-absolute?what=badarg2"      
 check "Score iter: 1 arg pass"        "$URL/scoring-iterative?a=badarg1"          200
 check "Score iter: 2 args pass"       "$URL/scoring-iterative?a=badarg1&b=badarg2" 200
 check "Score iter: 3 args block"      "$URL/scoring-iterative?a=badarg1&b=badarg2&c=badarg3" 403
+check_no_crash "Scoring tests"
 echo ""
 
 echo "--- Transaction ID tests ---"
 check "TxID: block works"             "$URL/txid-test?action=block"               403
 check "TxID: pass works"              "$URL/txid-test?action=safe"                200
+check_no_crash "Transaction ID tests"
 echo ""
 
 echo "--- Non-403 status code tests ---"
 check "401: deny blocks"                "$URL/deny-401?action=block"               401
 check "401: pass clean"                 "$URL/deny-401?action=safe"                200
 check "401: CRS SQLi still 403"         "$URL/deny-401?id=1%20OR%201=1"            403
+check_no_crash "Non-403 status code tests"
 echo ""
 
 echo "--- Location rule isolation tests ---"
@@ -691,6 +772,7 @@ check "Isolated-A: clean passes"        "$URL/isolated-a?trigger=x"             
 check "Isolated-B: trigger=b blocks"    "$URL/isolated-b?trigger=b"                403
 check "Isolated-B: trigger=a passes"    "$URL/isolated-b?trigger=a"                200
 check "Isolated-B: clean passes"        "$URL/isolated-b?trigger=x"                200
+check_no_crash "Location rule isolation tests"
 echo ""
 
 echo "--- Custom error page tests ---"
@@ -699,6 +781,7 @@ check_body "Error page: 401 body"       "$URL/errorpage-401?action=block"       
 check_body "Error page: CRS block body" "$URL/?id=1%20OR%201=1"                    403 "CORAZA_CUSTOM_ERROR_PAGE"
 check_body "Error page: pass no error"  "$URL/errorpage-test?action=safe"          200 "CORAZA_CUSTOM_ERROR_PAGE" "!"
 check_body "Error page: clean 200 body" "$URL/"                                    200 "OK"
+check_no_crash "Custom error page tests"
 echo ""
 
 echo "--- Redirect tests ---"
@@ -706,6 +789,7 @@ check_redirect "302 redirect: status + Location"  "$URL/redirect-302?target=redi
 check_redirect "301 redirect: status + Location"  "$URL/redirect-301?target=redirect"  301 "http://www.coraza.io"
 check "302 redirect: clean passes"                 "$URL/redirect-302?target=safe"      200
 check "301 redirect: clean passes"                 "$URL/redirect-301?target=safe"      200
+check_no_crash "Redirect tests"
 echo ""
 
 echo "--- Response header guards ---"
@@ -716,6 +800,7 @@ check_head   "HEAD /: not delayed, returns 200"          "$URL/"                
 check_header "Redirect: Location is exactly the target"  "$URL/redirect-302?target=redirect"  "Location" "http://www.coraza.io"
 check_header "Redirect: clean path+query preserved"      "$URL/redirect-clean-path?target=redirect" "Location" "http://example.org/clean/path?a=b"
 check_header "Clean response: no smuggled Set-Cookie"    "$URL/"                              "Set-Cookie" "" "!"
+check_no_crash "Response header guards"
 echo ""
 
 echo "--- VirtualHost isolation tests ---"
@@ -727,6 +812,7 @@ check_vhost "VHost-custom: rule blocks"      "vhost-custom.test" "$URL/?vhaction
 check_vhost "VHost-custom: rule passes"      "vhost-custom.test" "$URL/?vhaction=safe"                200
 check_vhost "VHost-custom: CRS SQLi blocked"  "vhost-custom.test" "$URL/?id=1%20OR%201=1"              403
 check "Main server: SQLi still blocked"      "$URL/?id=1%20OR%201=1"                                  403
+check_no_crash "VirtualHost isolation tests"
 echo ""
 
 # Audit log tests (require --container)
@@ -756,12 +842,14 @@ upload=$(mktemp)
 check_upload_body "POST 300 KB multipart upload is delivered intact (spooled)" \
     "$URL/echo" "$upload" 200 'SPOOL-HEADB*SPOOL-TAIL'
 rm -f "$upload"
+check_no_crash "Request body reaches the handler (issue #34)"
 echo ""
 
 if [ -n "$CONTAINER" ]; then
     echo "--- Delayed response cap log ---"
     # The large delayed response above must have tripped the cap's early flush.
     check_container_log "Cap: flushed delayed headers early"  "flushing headers early"
+    check_no_crash "Delayed response cap log"
     echo ""
 
     echo "--- Audit log tests ---"
@@ -775,6 +863,7 @@ if [ -n "$CONTAINER" ]; then
     check_audit_log "Contains section A"       "\-A\-\-"
     check_audit_log "Contains section B"       "\-B\-\-"
     check_audit_log "Contains section H"       "\-H\-\-"
+    check_no_crash "Audit log tests"
     echo ""
 
     echo "--- Transaction ID audit log tests ---"
@@ -783,6 +872,7 @@ if [ -n "$CONTAINER" ]; then
     sleep 1
     check_audit_log "TxID: ID in audit log"    "TESTID-APACHE-001"
     check_audit_log "TxID: URI in audit log"   "txid-test"
+    check_no_crash "Transaction ID audit log tests"
     echo ""
 
     echo "--- Debug log per-location isolation tests ---"
@@ -794,6 +884,7 @@ if [ -n "$CONTAINER" ]; then
     check_debug_log "DebugLog: root.log written" "/var/log/coraza/debug/root.log" "30001"
     check_debug_log "DebugLog: sub1.log written" "/var/log/coraza/debug/sub1.log" "30002"
     check_debug_log "DebugLog: sub2.log written" "/var/log/coraza/debug/sub2.log" "30003"
+    check_no_crash "Debug log per-location isolation tests"
     echo ""
 
     echo "--- Per-location audit log isolation tests ---"
@@ -816,6 +907,7 @@ if [ -n "$CONTAINER" ]; then
     check_perloc_audit_log "AuditLog: sub4.log has inherited sub3"  "/var/log/coraza/audit/sub4.log" "what=sub3"
     check_perloc_audit_log "AuditLog: sub4.log has sub4withE req"   "/var/log/coraza/audit/sub4.log" "what=sub4withE"
     check_perloc_audit_log "AuditLog: sub4.log has E section"       "/var/log/coraza/audit/sub4.log" "\-E\-\-"
+    check_no_crash "Per-location audit log isolation tests"
     echo ""
 
     echo "--- auditlog action with RelevantOnly tests ---"
@@ -830,6 +922,27 @@ if [ -n "$CONTAINER" ]; then
     check_perloc_audit_log "RelevantOnly: trigger=yes logged"          "/var/log/coraza/audit/relevant.log" "trigger=yes"
     check_perloc_audit_log_absent "RelevantOnly: trigger=no NOT logged"    "/var/log/coraza/audit/relevant.log" "trigger=no"
     check_perloc_audit_log_absent "noauditlog: trigger=yes NOT logged"     "/var/log/coraza/audit/relevant-nolog.log" "trigger=yes"
+    check_no_crash "auditlog action with RelevantOnly tests"
+    echo ""
+
+    echo "--- Crash sweep self-test ---"
+    # The sweep is only worth having if it actually fires: write a fake MPM
+    # worker-exit line to httpd's stderr (PID 1's fd 2 is the ErrorLog) and
+    # require the next sweep to report it. The counter is then advanced so the
+    # injected line does not fail any later sweep.
+    docker exec "$CONTAINER" sh -c 'echo "[$(date)] [mpm_event:notice] [pid 1] AH00052: child pid 99999 exit signal Segmentation fault (11) (injected by test.sh self-test)" > /proc/1/fd/2'
+    sleep 1
+    if ! lines=$(crash_lines); then
+        printf "  FAIL  Crash sweep self-test: docker logs unreadable\n"
+        FAIL=$((FAIL + 1))
+    elif [ "$(printf '%s' "$lines" | grep -c .)" -gt "$CRASH_SEEN" ]; then
+        printf "  PASS  Crash sweep self-test: injected worker-exit line is detected\n"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  Crash sweep self-test: injected worker-exit line NOT detected\n"
+        FAIL=$((FAIL + 1))
+    fi
+    CRASH_SEEN=$(printf '%s' "$lines" | grep -c .)
     echo ""
 else
     echo "--- Audit log tests (skipped: use --container=NAME) ---"

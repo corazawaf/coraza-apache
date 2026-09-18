@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **128 tests** against a Docker
+The integration test suite (`test.sh`) runs **192 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (128 tests, event MPM)
+# Full suite (192 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (108 tests, no audit/debug log checks, no MPM verification)
+# Minimal (129 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` (+19 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+62 tests) |
 
 ## Test Categories
 
@@ -159,6 +159,30 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
+### Crash and worker-health sweep (39 tests: 38 sweeps + 1 self-test, requires `--container`)
+
+Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
+that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
+`docker logs` — and a sanitizer build leaves its report there. A test that kills
+a worker and gets its 200 from the next one would otherwise pass. `check_no_crash`
+runs after every section, reports only lines new since the previous sweep (so
+the failing section is named), and probes `/server-info` to catch a wedged
+server. A self-test injects a fake worker-exit line into httpd's stderr and
+requires the sweep to detect it, so the oracle is proven live, not assumed.
+
+### auditlog action with RelevantOnly (3 tests, requires `--container`)
+
+`SecAuditEngine RelevantOnly` with a rule carrying `auditlog` / `noauditlog`:
+a matching request is logged, a non-matching one is not, and `noauditlog`
+suppresses the entry even on a match (per-location audit files, checked via
+`docker exec`).
+
+### Delayed response cap log (1 test, requires `--container`)
+
+Companion to the delayed-response cap tests above: the container log must
+carry the "flushing headers early" line when the 4 MiB body crosses
+`CORAZA_MAX_DELAYED_BODY`.
+
 ### Request body replay (4 tests)
 
 The fixups hook reads the request body with `ap_get_client_block()` to inspect
@@ -193,7 +217,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 128-test suite passes after all restarts.
+restarts (1s apart). Full 192-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered
