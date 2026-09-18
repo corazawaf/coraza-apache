@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **192 tests** against a Docker
+The integration test suite (`test.sh`) runs **196 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (192 tests, event MPM)
+# Full suite (196 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (129 tests, no audit/debug log checks, no MPM verification)
+# Minimal (133 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -110,8 +110,8 @@ Host-side greps over `src/` for properties the black-box suite cannot observe:
 `coraza_free_string` is bound as a required symbol, both `coraza_new_waf()` call
 sites release the Go-allocated error string through it (each check scoped to its
 function, `coraza_build_waf` and `coraza_child_init`), and no libc `free()`
-touches those strings (allocator mismatch, per the libcoraza docs). Totals in
-this file are reconciled once #56 and this change have both landed.
+touches those strings (allocator mismatch, per the libcoraza docs). These run
+without `--container`, so they count in the minimal run too.
 
 ### Request Protocol (5 tests)
 
@@ -226,7 +226,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 192-test suite passes after all restarts.
+restarts (1s apart). Full 196-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered
