@@ -363,6 +363,30 @@ check_curl() {
     fi
 }
 
+# Source-contract check: assert a pattern in a module source file. The suite
+# runs from the repository (test.sh sits at its root), so this pins things the
+# black-box tests cannot observe, such as a freed string. \"!\" negates.
+SRC_DIR=$(dirname "$0")/src
+check_source() {
+    desc="$1"
+    file="$2"
+    pattern="$3"
+    negate="$4"
+
+    if [ "$negate" = "!" ]; then
+        if ! grep -qE "$pattern" "$SRC_DIR/$file"; then ok=true; else ok=false; fi
+    else
+        if grep -qE "$pattern" "$SRC_DIR/$file"; then ok=true; else ok=false; fi
+    fi
+    if $ok; then
+        printf "  PASS  %s\n" "$desc"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s (pattern '%s' %sin %s)\n" "$desc" "$pattern" "$([ "$negate" = "!" ] && echo "found " || echo "not ")" "$file"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 # Send a raw request line and return the status code. curl cannot emit an
 # arbitrary HTTP version, so this speaks to the socket directly: nc where
 # available, bash's /dev/tcp otherwise. The request is piped straight in --
@@ -458,6 +482,26 @@ check_no_crash() {
         FAIL=$((FAIL + 1))
     fi
     CRASH_SEEN=$count
+}
+
+# Same, scoped to one function: the body runs from the line that starts with
+# the function name (K&R style, return type on the previous line) to the next
+# closing brace in column 0. Binds an assertion to the function that must
+# contain it, so a call moved elsewhere in the file no longer satisfies it.
+check_source_in_func() {
+    desc="$1"
+    file="$2"
+    func="$3"
+    pattern="$4"
+
+    if awk -v fn="$func" 'index($0, fn "(") == 1 {f=1} f {print} f && /^}$/ {exit}' "$SRC_DIR/$file" \
+        | grep -qE "$pattern"; then
+        printf "  PASS  %s\n" "$desc"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s (pattern '%s' not in %s() of %s)\n" "$desc" "$pattern" "$func" "$file"
+        FAIL=$((FAIL + 1))
+    fi
 }
 
 # Fetch a streaming endpoint with a short timeout and assert whether a pattern
@@ -661,6 +705,16 @@ check "Phase 1: pass clean"           "$URL/phase1?action=safe"                 
 check_post "Phase 2: deny on body"    "$URL/phase2" "PHASE2ATTACK"                403
 check_post "Phase 2: pass clean"      "$URL/phase2" "cleandata"                   200
 check_no_crash "Per-phase tests (1+2)"
+echo ""
+
+echo "--- Source contract: libcoraza strings are released through libcoraza ---"
+# coraza_new_waf() hands back a Go-allocated reason string on failure. Both
+# call sites must release it with coraza_free_string() (never libc free(),
+# allocator mismatch), and the symbol must be bound as required.
+check_source "coraza_free_string is bound as a required symbol" mod_coraza_dl.c 'DL_SYM\(dl_free_string, *coraza_free_string\)'
+check_source_in_func "build_waf releases the coraza_new_waf error string" mod_coraza.c coraza_build_waf 'coraza_free_string\(error\)'
+check_source_in_func "empty-WAF fallback releases the coraza_new_waf error string" mod_coraza.c coraza_child_init 'coraza_free_string\(err\)'
+check_source "no libc free() on a libcoraza string" mod_coraza.c '(^|[^[:alnum:]_])free[[:space:]]*\([[:space:]]*(error|err)[[:space:]]*\)' !
 echo ""
 
 echo "--- Request protocol tests ---"

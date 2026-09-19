@@ -686,6 +686,11 @@ coraza_build_waf(apr_array_header_t *rules, server_rec *s)
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s,
                      "coraza: failed to create WAF: %s",
                      error ? error : "unknown error");
+    }
+    if (error != NULL) {
+        coraza_free_string(error);
+    }
+    if (waf == 0) {
         return 0;
     }
 
@@ -738,6 +743,13 @@ coraza_child_init(apr_pool_t *p, server_rec *s)
                 char *err = NULL;
                 scf->waf = coraza_new_waf(cfg, &err);
                 coraza_free_waf_config(cfg);
+                if (err != NULL) {
+                    /* Log the engine's reason rather than dropping it; the
+                     * generic "failed to build server WAF" below follows. */
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, sv,
+                                 "coraza: failed to create empty WAF: %s", err);
+                    coraza_free_string(err);
+                }
             }
         }
 
