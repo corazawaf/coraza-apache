@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.21.1](https://github.com/corazawaf/coraza-apache/compare/v0.21.0...v0.21.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* hand the request body on to the application ([b5fbea8](https://github.com/corazawaf/coraza-apache/commit/b5fbea8c9ae3303b37fb3b7021c1f29c06d5c5bb))
+* hand the request body on to the application ([01c37f8](https://github.com/corazawaf/coraza-apache/commit/01c37f8ef6a7e17b31506311665f7f1fedf453bf)), closes [#34](https://github.com/corazawaf/coraza-apache/issues/34)
+* partition speculative replay reads and honour AP_MODE_EXHAUSTIVE ([ddc49b3](https://github.com/corazawaf/coraza-apache/commit/ddc49b395b2eb11e711cc465391ab27707756290))
+* release the coraza_new_waf error string with coraza_free_string ([#57](https://github.com/corazawaf/coraza-apache/issues/57)) ([21d7e68](https://github.com/corazawaf/coraza-apache/commit/21d7e682d4516ffe825cdf4e1fea4abfb6954894))
+* report the protocol version as it arrived ([49e828a](https://github.com/corazawaf/coraza-apache/commit/49e828af7a99fa88d503d1623a27021cfb55f16f))
+* report the protocol version as it arrived ([bba4139](https://github.com/corazawaf/coraza-apache/commit/bba413973d05f6d9a75214e27686e4f0f30a7cc3)), closes [#36](https://github.com/corazawaf/coraza-apache/issues/36)
+* reset r-&gt;read_length so ap_get_client_block callers get the replay ([3c73c7a](https://github.com/corazawaf/coraza-apache/commit/3c73c7a4951df5f20dc3cb92d64bdedc29f59c3a)), closes [#34](https://github.com/corazawaf/coraza-apache/issues/34)
+* spool the saved request body to disk above an in-memory limit ([a64cf9a](https://github.com/corazawaf/coraza-apache/commit/a64cf9a17d16464340c0b2d853b858335abe509f))
+
 ## [0.21.0](https://github.com/corazawaf/coraza-apache/compare/v0.20.1...v0.21.0) (2026-08-30)
 
 
