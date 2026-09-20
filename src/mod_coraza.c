@@ -908,6 +908,100 @@ coraza_child_exit(void *data)
 /* post_config: log rule counts                                        */
 /* ------------------------------------------------------------------ */
 
+/* Does any server in the config carry at least one rule directive?
+ * Every CorazaRules / CorazaRulesFile / Sec* directive bumps its server's
+ * counters whatever its scope (server level, <Directory>, <Location>), so
+ * this is the whole static configuration. .htaccess files are parsed per
+ * request and are invisible here. */
+static int
+coraza_config_has_rules(server_rec *s)
+{
+    server_rec *sv;
+    coraza_server_conf_t *scf;
+
+    for (sv = s; sv; sv = sv->next) {
+        scf = ap_get_module_config(sv->module_config, &coraza_module);
+        if (scf != NULL && (scf->rules_inline > 0 || scf->rules_file > 0)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Is "Coraza On" set anywhere in the static config? Server-level directives
+ * land in the server's default per-dir config; section directives sit in the
+ * core's <Directory> and <Location> vectors. Returns the scope for the
+ * diagnostic and the server it was found on, or NULL. */
+static const char *
+coraza_config_enabled_where(server_rec *s, server_rec **where)
+{
+    server_rec *sv;
+    coraza_dir_conf_t *dcf;
+    core_server_config *csc;
+    int i;
+
+    for (sv = s; sv; sv = sv->next) {
+        dcf = ap_get_module_config(sv->lookup_defaults, &coraza_module);
+        if (dcf != NULL && dcf->enable == 1) {
+            *where = sv;
+            return "server level";
+        }
+        csc = ap_get_core_module_config(sv->module_config);
+        if (csc == NULL) {
+            continue;
+        }
+        for (i = 0; i < csc->sec_dir->nelts; i++) {
+            ap_conf_vector_t *v = ((ap_conf_vector_t **)csc->sec_dir->elts)[i];
+            dcf = ap_get_module_config(v, &coraza_module);
+            if (dcf != NULL && dcf->enable == 1) {
+                *where = sv;
+                return "in a <Directory> section";
+            }
+        }
+        for (i = 0; i < csc->sec_url->nelts; i++) {
+            ap_conf_vector_t *v = ((ap_conf_vector_t **)csc->sec_url->elts)[i];
+            dcf = ap_get_module_config(v, &coraza_module);
+            if (dcf != NULL && dcf->enable == 1) {
+                *where = sv;
+                return "in a <Location> section";
+            }
+        }
+    }
+    return NULL;
+}
+
+/* check_config hook: refuse a configuration that enables the module without
+ * any rule anywhere. Without this, "Coraza On" and no rules starts an empty
+ * WAF that passes everything through while looking armed. This is
+ * check_config rather than post_config on purpose: httpd runs check_config
+ * before the "httpd -t" exit and treats a non-OK return as "Configuration
+ * check failed" (exit 1), whereas post_config only runs on a real start --
+ * so the operator is told at validation time, as with "nginx -t". Same
+ * whole-config scope as the nginx connector; "server A has rules, server B
+ * enables without any" is deliberately not rejected, since the per-dir
+ * fallback masks it the same way there. */
+static int
+coraza_check_config(apr_pool_t *pconf, apr_pool_t *plog,
+                    apr_pool_t *ptemp, server_rec *s)
+{
+    server_rec *where = NULL;
+    const char *scope;
+
+    scope = coraza_config_enabled_where(s, &where);
+    if (scope != NULL && !coraza_config_has_rules(s)) {
+        ap_log_error(APLOG_MARK, APLOG_EMERG, 0, where,
+                     "coraza: \"Coraza On\" (%s) requires at least one rule "
+                     "directive -- CorazaRules, CorazaRulesFile or a Sec* "
+                     "directive -- somewhere in the server configuration, and "
+                     "none was found: the WAF would run without rules and pass "
+                     "everything through. Rules that live only in .htaccess "
+                     "files are not visible at startup.", scope);
+        return HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    return OK;
+}
+
 /* Post-config hook: log collected rule counts for each server_rec.
  * WAFs aren't built yet (that happens post-fork in child_init). */
 static int
@@ -962,6 +1056,8 @@ coraza_register_hooks(apr_pool_t *p)
 
     /* Post-config for logging */
     ap_hook_post_config(coraza_post_config, NULL, NULL, APR_HOOK_MIDDLE);
+    /* Whole-config validation: runs for httpd -t as well as at startup. */
+    ap_hook_check_config(coraza_check_config, NULL, NULL, APR_HOOK_MIDDLE);
 
     /* child_init for dlopen and WAF building */
     ap_hook_child_init(coraza_child_init, NULL, NULL, APR_HOOK_MIDDLE);

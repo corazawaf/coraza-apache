@@ -115,6 +115,11 @@ files that reference relative data file paths. Context: server config, `<Virtual
 
 Rules defined at server level are inherited by `<VirtualHost>`, `<Location>`, `<Directory>`, and `.htaccess`.
 Setting `Coraza Off` in any context disables inspection for that scope.
+`Coraza On` requires at least one rule directive (`CorazaRules`, `CorazaRulesFile`
+or a `Sec*` directive) somewhere in the server configuration: a configuration
+that enables the module without any rules is rejected at startup rather than
+run an empty WAF. Rules that live only in `.htaccess` files are not visible at
+that point.
 
 **CorazaRequestBodyInMemoryLimit** bytes -- how much of a request body is kept
 in memory for replay to the handler before the remainder is spooled to a temp
