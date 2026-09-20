@@ -184,6 +184,24 @@ check_upload_body() {
     fi
 }
 
+# Assert the number of audit-log lines matching a pattern. Count request
+# lines (^GET / ^POST): one per entry. A tag would be counted once per part
+# it appears in (request line, rule message) and say nothing about entries.
+check_audit_count() {
+    desc="$1"
+    pattern="$2"
+    expected="$3"
+
+    n=$(docker exec "$CONTAINER" grep -c "$pattern" /var/log/coraza/audit.log 2>/dev/null)
+    if [ "${n:-0}" = "$expected" ]; then
+        printf "  PASS  %s -> %s\n" "$desc" "$n"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> %s (expected %s matches of '%s')\n" "$desc" "${n:-0}" "$expected" "$pattern"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 clear_audit_log() {
     docker exec "$CONTAINER" truncate -s 0 /var/log/coraza/audit.log 2>/dev/null
 }
@@ -835,6 +853,15 @@ check_body "Error page: 401 body"       "$URL/errorpage-401?action=block"       
 check_body "Error page: CRS block body" "$URL/?id=1%20OR%201=1"                    403 "CORAZA_CUSTOM_ERROR_PAGE"
 check_body "Error page: pass no error"  "$URL/errorpage-test?action=safe"          200 "CORAZA_CUSTOM_ERROR_PAGE" "!"
 check_body "Error page: clean 200 body" "$URL/"                                    200 "OK"
+# The error page location carries a phase-4 rule matching the page's own body.
+# Served for a request this transaction already denied, the page must come
+# back untouched (the transaction is reused across the internal redirect and
+# does not deny twice); requested directly, the rule must fire -- proving it is
+# live and only the error-document path is exempt.
+check_body "Error page: served untouched though a phase-4 rule matches its body (issue #40)" \
+    "$URL/errorpage-test?action=block&tag=errdoc" 403 "CORAZA_CUSTOM_ERROR_PAGE"
+check "Error page: the same phase-4 rule fires on a direct request (control)" \
+    "$URL/custom-error.html" 500
 check_no_crash "Custom error page tests"
 echo ""
 
@@ -920,6 +947,17 @@ if [ -n "$CONTAINER" ]; then
     check_no_crash "Audit log tests"
     echo ""
 
+    echo "--- Error page audit (issue #40) ---"
+    # One client request, denied, served an ErrorDocument through an internal
+    # redirect: one transaction, one audit entry -- not one per request_rec.
+    # The log is cleared first, so the count is of entries, not of a tag.
+    clear_audit_log
+    curl -s -o /dev/null "$URL/errorpage-test?action=block&tag=errdoc-once"
+    sleep 1
+    check_audit_count "Error page: exactly one audit entry for the denied request" "^GET " 1
+    check_no_crash "Error page audit"
+    echo ""
+
     echo "--- Transaction ID audit log tests ---"
     clear_audit_log
     curl -s -o /dev/null "$URL/txid-test?action=block"
@@ -1000,6 +1038,7 @@ if [ -n "$CONTAINER" ]; then
     echo ""
 else
     echo "--- Audit log tests (skipped: use --container=NAME) ---"
+    echo "--- Error page audit (skipped: use --container=NAME) ---"
     echo "--- Transaction ID audit log tests (skipped: use --container=NAME) ---"
     echo "--- Debug log per-location isolation tests (skipped: use --container=NAME) ---"
     echo "--- Per-location audit log isolation tests (skipped: use --container=NAME) ---"

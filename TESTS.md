@@ -128,7 +128,7 @@ sent over a socket because curl cannot emit arbitrary versions.
 | HTTP/1.1 does not trip the raw rule | control on `/protocol-raw` (200) |
 | CRS 920430 rejects HTTP/4.0 on / | the version policy is enforceable through the connector (403) |
 
-### Custom Error Pages (5 tests)
+### Custom Error Pages (7 tests)
 
 `ErrorDocument 403` and `ErrorDocument 401` with `Coraza Off` on the error
 page Location. Verifies error page body is served on block and not on pass.
@@ -146,6 +146,13 @@ config as base). `Coraza Off` in a VirtualHost fully disables inspection.
 | `vhost-off.test` | `Coraza Off` | 3 | Normal OK, SQLi passes, XSS passes |
 | `vhost-custom.test` | `Coraza On` + 1 custom rule | 4 | Normal OK, custom rule blocks/passes, inherited CRS blocks SQLi |
 | Main server | CRS enabled | 1 | SQLi still blocked (regression check) |
+
+### Error page audit (2 tests, requires `--container`)
+
+A denied request served an `ErrorDocument` through an internal redirect is one
+transaction: after clearing the log, it must hold exactly one entry (one
+request line), followed by the section's crash sweep. Totals in this file are
+reconciled once #58 and this change have both landed.
 
 ### Audit Log (7 tests, requires `--container`)
 

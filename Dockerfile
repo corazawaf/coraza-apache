@@ -146,8 +146,13 @@ RUN { \
     echo '</Directory>'; \
     echo 'ErrorDocument 403 /custom-error.html'; \
     echo 'ErrorDocument 401 /custom-error.html'; \
+    echo '# The error page is inspected like any other response. The phase-4'; \
+    echo '# rule below matches its own body: it must fire on a direct request, and'; \
+    echo '# must NOT fire when the page is served for a request this transaction'; \
+    echo '# already denied (issue #40).'; \
     echo '<Location "/custom-error.html">'; \
-    echo '    Coraza Off'; \
+    echo '    Coraza On'; \
+    echo '    SecRule RESPONSE_BODY "@contains CORAZA_CUSTOM_ERROR_PAGE" "id:20999,phase:4,deny,status:500,log"'; \
     echo '</Location>'; \
     echo '# --- Non-403 status codes ---'; \
     echo '<Location "/deny-401">'; \

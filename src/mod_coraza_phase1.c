@@ -66,6 +66,24 @@ coraza_open_body_spool(request_rec *r, apr_file_t **spool)
  * here ensures the WAF inspects it even for handlers that never consume
  * it (e.g. static file serving returning 404).
  */
+/* The transaction of the request the client actually sent, found by walking
+ * back through the internal-redirect chain (r->prev). NULL when none of the
+ * earlier request_recs was inspected. */
+static coraza_request_ctx_t *
+coraza_ctx_from_prev(request_rec *r)
+{
+    request_rec *p;
+    coraza_request_ctx_t *ctx;
+
+    for (p = r->prev; p != NULL; p = p->prev) {
+        ctx = ap_get_module_config(p->request_config, &coraza_module);
+        if (ctx != NULL) {
+            return ctx;
+        }
+    }
+    return NULL;
+}
+
 int
 coraza_post_read_request(request_rec *r)
 {
@@ -87,6 +105,26 @@ coraza_post_read_request(request_rec *r)
     ctx = ap_get_module_config(r->request_config, &coraza_module);
     if (ctx != NULL) {
         return DECLINED;
+    }
+
+    /* Internal redirect (ErrorDocument, FallbackResource, DirectoryIndex,
+     * mod_rewrite): a new request_rec, but the same client request. The
+     * transaction belongs to the request the client sent, so reuse it --
+     * phases 1 and 2 already ran there and the body has been consumed -- and
+     * re-attach the output filter, which httpd drops on an internal redirect,
+     * so phases 3 and 4 inspect the response the client actually receives
+     * under that transaction and its single audit entry. A transaction that
+     * already denied (we are serving our own error page) passes the filter's
+     * intervention guard untouched: no second deny, no error-page loop. When
+     * no earlier request_rec was inspected, fall through and treat this as a
+     * fresh request. */
+    if (r->prev != NULL) {
+        ctx = coraza_ctx_from_prev(r);
+        if (ctx != NULL) {
+            ap_set_module_config(r->request_config, &coraza_module, ctx);
+            ap_add_output_filter(CORAZA_OUT_FILTER, ctx, r, r->connection);
+            return DECLINED;
+        }
     }
 
     /* Create transaction context */
