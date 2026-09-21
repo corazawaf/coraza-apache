@@ -581,6 +581,30 @@ check_size() {
 }
 
 # Assert a pattern appears in the container's stderr log (Apache error_log).
+# Validate a configuration with httpd -t inside the container. The config is
+# the image's own httpd.conf minus the include that carries the rules, plus
+# whatever directives the test appends, so each case is exactly one delta.
+check_config_validation() {
+    desc="$1"
+    extra="$2"
+    expected_rc="$3"
+    pattern="$4"
+
+    out=$(docker exec "$CONTAINER" sh -c '
+        grep -v "conf/extra/coraza.conf" /usr/local/apache2/conf/httpd.conf > /tmp/validate.conf
+        printf "LoadModule coraza_module modules/mod_coraza.so\n%s\n" "$1" >> /tmp/validate.conf
+        httpd -t -f /tmp/validate.conf 2>&1; echo "rc=$?"' sh "$extra" 2>&1)
+    rc=$(printf '%s\n' "$out" | sed -n 's/^rc=//p' | tail -1)
+
+    if [ "$rc" = "$expected_rc" ] && printf '%s\n' "$out" | grep -q "$pattern"; then
+        printf "  PASS  %s -> rc=%s\n" "$desc" "$rc"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> rc=%s (expected %s, pattern '%s'): %s\n" "$desc" "${rc:-none}" "$expected_rc" "$pattern" "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-140)"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 check_container_log() {
     desc="$1"
     pattern="$2"
@@ -927,6 +951,19 @@ check_no_crash "Request body reaches the handler (issue #34)"
 echo ""
 
 if [ -n "$CONTAINER" ]; then
+    echo "--- Config validation: ruleless \"Coraza On\" is rejected (issue #39) ---"
+    # "Coraza On" with no rule directive anywhere must fail httpd -t rather
+    # than start an empty WAF; one rule anywhere makes it pass, and "Coraza
+    # Off" without rules is not an error.
+    check_config_validation "Coraza On with no rules fails validation" \
+        'Coraza On' 1 'requires at least one rule directive'
+    check_config_validation "Coraza On with one rule passes validation" \
+        'Coraza On
+CorazaRules "SecRuleEngine On"' 0 'Syntax OK'
+    check_config_validation "Coraza Off with no rules passes validation" \
+        'Coraza Off' 0 'Syntax OK'
+    echo ""
+
     echo "--- Delayed response cap log ---"
     # The large delayed response above must have tripped the cap's early flush.
     check_container_log "Cap: flushed delayed headers early"  "flushing headers early"
@@ -1037,6 +1074,7 @@ if [ -n "$CONTAINER" ]; then
     CRASH_SEEN=$(printf '%s' "$lines" | grep -c .)
     echo ""
 else
+    echo "--- Config validation tests (skipped: use --container=NAME) ---"
     echo "--- Audit log tests (skipped: use --container=NAME) ---"
     echo "--- Error page audit (skipped: use --container=NAME) ---"
     echo "--- Transaction ID audit log tests (skipped: use --container=NAME) ---"

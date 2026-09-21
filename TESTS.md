@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **196 tests** against a Docker
+The integration test suite (`test.sh`) runs **199 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,7 +10,7 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (196 tests, event MPM)
+# Full suite (199 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
 # Minimal (133 tests, no audit/debug log checks, no MPM verification)
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+62 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+65 tests) |
 
 ## Test Categories
 
@@ -127,6 +127,13 @@ sent over a socket because curl cannot emit arbitrary versions.
 | HTTP/4.0 reaches REQUEST_PROTOCOL verbatim | raw token matches `@streq HTTP/4.0` (406) |
 | HTTP/1.1 does not trip the raw rule | control on `/protocol-raw` (200) |
 | CRS 920430 rejects HTTP/4.0 on / | the version policy is enforceable through the connector (403) |
+
+### Config validation (3 tests, requires `--container`)
+
+`httpd -t` inside the container on the image's own `httpd.conf` minus the rules
+include, plus one delta per case: `Coraza On` with no rule anywhere fails with
+the fail-closed diagnostic; `Coraza On` plus a single rule passes; `Coraza Off`
+without rules passes.
 
 ### Custom Error Pages (7 tests)
 
@@ -233,7 +240,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 196-test suite passes after all restarts.
+restarts (1s apart). Full 199-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered
