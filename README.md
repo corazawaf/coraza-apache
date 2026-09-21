@@ -140,6 +140,13 @@ The module hooks into Apache's request processing:
 - **Phase 3-4** (output filter): response headers and body, with header delay
 - **Phase 5** (log_transaction hook): audit logging
 
+An internal redirect (`ErrorDocument`, `FallbackResource`, `DirectoryIndex`,
+`mod_rewrite`) creates a new `request_rec` for the same client request. The
+module reuses the transaction of the request the client sent: phases 1-2 are
+not repeated, phases 3-4 inspect the response actually served, and there is one
+audit entry. An error page served because that transaction denied the request
+is passed through as-is rather than inspected and possibly denied again.
+
 Rules are collected as strings during config parsing (master process)
 and replayed in each child process after dlopen. This is required because
 the Go runtime inside libcoraza cannot be loaded before fork.

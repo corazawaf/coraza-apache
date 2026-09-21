@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **199 tests** against a Docker
+The integration test suite (`test.sh`) runs **203 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (199 tests, event MPM)
+# Full suite (203 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (133 tests, no audit/debug log checks, no MPM verification)
+# Minimal (135 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+65 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+67 tests) |
 
 ## Test Categories
 
@@ -135,10 +135,13 @@ include, plus one delta per case: `Coraza On` with no rule anywhere fails with
 the fail-closed diagnostic; `Coraza On` plus a single rule passes; `Coraza Off`
 without rules passes.
 
-### Custom Error Pages (5 tests)
+### Custom Error Pages (7 tests)
 
-`ErrorDocument 403` and `ErrorDocument 401` with `Coraza Off` on the error
-page Location. Verifies error page body is served on block and not on pass.
+`ErrorDocument 403` and `ErrorDocument 401`, with the error page Location
+inspected (`Coraza On`) and carrying a phase-4 rule that matches the page's own
+body. Verifies the error page body is served on block and not on pass, that
+the page comes back untouched for a request this transaction already denied
+(issue #40), and that the same rule fires when the page is requested directly.
 
 ### VirtualHost Isolation (8 tests)
 
@@ -153,6 +156,12 @@ config as base). `Coraza Off` in a VirtualHost fully disables inspection.
 | `vhost-off.test` | `Coraza Off` | 3 | Normal OK, SQLi passes, XSS passes |
 | `vhost-custom.test` | `Coraza On` + 1 custom rule | 4 | Normal OK, custom rule blocks/passes, inherited CRS blocks SQLi |
 | Main server | CRS enabled | 1 | SQLi still blocked (regression check) |
+
+### Error page audit (2 tests, requires `--container`)
+
+A denied request served an `ErrorDocument` through an internal redirect is one
+transaction: after clearing the log, it must hold exactly one entry (one
+request line), followed by the section's crash sweep.
 
 ### Audit Log (7 tests, requires `--container`)
 
@@ -175,7 +184,7 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
-### Crash and worker-health sweep (39 tests: 38 sweeps + 1 self-test, requires `--container`)
+### Crash and worker-health sweep (40 tests: 39 sweeps + 1 self-test, requires `--container`)
 
 Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
 that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
@@ -233,7 +242,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 199-test suite passes after all restarts.
+restarts (1s apart). Full 203-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered
