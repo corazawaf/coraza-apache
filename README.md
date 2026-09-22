@@ -138,6 +138,12 @@ The module hooks into Apache's request processing:
 - **Phase 1** (fixups hook): connection info, URI, request headers
 - **Phase 2** (fixups hook): request body -- read proactively via ap_get_client_block()
 - **Phase 3-4** (output filter): response headers and body, with header delay
+  while the body is inspected. When it will not be (a Content-Type outside
+  `SecResponseBodyMimeType`, or `SecResponseBodyAccess Off` with libcoraza >= 1.8,
+  which exports the predicate the module needs to see it) phase 4 is finalised
+  before the headers are sent and the response streams; a deny there still
+  gets a clean error page. With libcoraza 1.7 `SecResponseBodyAccess Off`
+  responses are still held until the body ends.
 - **Phase 5** (log_transaction hook): audit logging
 
 An internal redirect (`ErrorDocument`, `FallbackResource`, `DirectoryIndex`,

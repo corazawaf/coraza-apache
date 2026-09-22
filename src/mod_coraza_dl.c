@@ -46,6 +46,7 @@ typedef int                  (*fn_coraza_update_status_code)(coraza_transaction_
 typedef int                  (*fn_coraza_add_get_args)(coraza_transaction_t, char *, char *);
 typedef int                  (*fn_coraza_is_response_body_processable)(coraza_transaction_t);
 typedef int                  (*fn_coraza_version_num)(void);
+typedef int                  (*fn_coraza_is_response_body_accessible)(coraza_transaction_t);
 typedef void                 (*fn_coraza_free_string)(char *);
 
 /* ------------------------------------------------------------------ */
@@ -81,6 +82,10 @@ static fn_coraza_process_logging         dl_process_logging;
 static fn_coraza_update_status_code      dl_update_status_code;
 static fn_coraza_add_get_args            dl_add_get_args;
 static fn_coraza_is_response_body_processable dl_is_response_body_processable;
+/* Optional: exported by libcoraza >= 1.8 (corazawaf/libcoraza#128). NULL on
+ * older libraries, where the wrapper below assumes the body is accessible --
+ * i.e. the behaviour before the predicate existed. */
+static fn_coraza_is_response_body_accessible dl_is_response_body_accessible;
 
 static dynlib_t dl_handle;
 
@@ -176,6 +181,25 @@ coraza_dl_open(server_rec *s)
     }
     apr_snprintf(version_str, sizeof(version_str), "%d.%d.%d",
                  version / 10000, version / 100 % 100, version % 100);
+
+    /* Optional symbol: resolve by hand, never through DL_SYM (which fails the
+
+     * load). Logged so an operator can tell which behaviour is in effect. */
+
+    *(void **)(&dl_is_response_body_accessible) =
+
+        dynlib_sym(dl_handle, "coraza_is_response_body_accessible");
+
+    ap_log_error(APLOG_MARK, APLOG_NOTICE, 0, s,
+
+                 "coraza: response-body access predicate "
+
+                 "(coraza_is_response_body_accessible): %s",
+
+                 dl_is_response_body_accessible != NULL
+
+                 ? "available" : "not exported by this libcoraza, assuming accessible");
+
 
     ap_log_error(APLOG_MARK, APLOG_NOTICE, 0, s,
                  "coraza: %s loaded via dynlib_open (libcoraza %s)",
@@ -367,4 +391,16 @@ int coraza_add_get_args(coraza_transaction_t t, char *name,
 int coraza_is_response_body_processable(coraza_transaction_t t)
 {
     return dl_is_response_body_processable(t);
+}
+
+/* Returns 1 when SecResponseBodyAccess is on for the transaction. Without the
+ * symbol (libcoraza < 1.8) it returns 1: the body is then treated as
+ * inspected whenever its Content-Type is processable, which is what the module
+ * did before the predicate existed. */
+int coraza_is_response_body_accessible(coraza_transaction_t t)
+{
+    if (dl_is_response_body_accessible == NULL) {
+        return 1;
+    }
+    return dl_is_response_body_accessible(t);
 }

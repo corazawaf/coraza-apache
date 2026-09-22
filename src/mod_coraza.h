@@ -161,6 +161,10 @@ int coraza_dl_open(server_rec *s);
 /* dlclose libcoraza.so. */
 void coraza_dl_close(server_rec *s);
 
+/* Optional libcoraza >= 1.8 predicate (corazawaf/libcoraza#128); declared here
+ * because the 1.7 header does not know it. 1 when the symbol is missing. */
+int coraza_is_response_body_accessible(coraza_transaction_t t);
+
 /* mod_coraza_phase1.c */
 
 /* Fixups hook: phases 1+2 — connection, URI, headers, request body. */

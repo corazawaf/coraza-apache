@@ -114,6 +114,8 @@ COPY tests/cgi-bin/bulk /usr/local/apache2/cgi-bin/bulk
 RUN chmod +x /usr/local/apache2/cgi-bin/bulk
 COPY tests/cgi-bin/echo /usr/local/apache2/cgi-bin/echo
 RUN chmod +x /usr/local/apache2/cgi-bin/echo
+COPY tests/cgi-bin/stream-json /usr/local/apache2/cgi-bin/stream-json
+RUN chmod +x /usr/local/apache2/cgi-bin/stream-json
 
 # Apache config: load module, enable coraza with CRS, FallbackResource for test URLs
 RUN { \
@@ -209,6 +211,9 @@ RUN { \
     echo 'ScriptAlias "/sse-nearmiss" "/usr/local/apache2/cgi-bin/sse"'; \
     echo 'ScriptAlias "/bulk-delayed" "/usr/local/apache2/cgi-bin/bulk"'; \
     echo 'ScriptAlias "/echo" "/usr/local/apache2/cgi-bin/echo"'; \
+    echo 'ScriptAlias "/stream-json-off" "/usr/local/apache2/cgi-bin/stream-json"'; \
+    echo 'ScriptAlias "/stream-json-mime" "/usr/local/apache2/cgi-bin/stream-json"'; \
+    echo 'ScriptAlias "/stream-json-on" "/usr/local/apache2/cgi-bin/stream-json"'; \
     echo '<Directory "/usr/local/apache2/cgi-bin">'; \
     echo '    Require all granted'; \
     echo '    Options +ExecCGI'; \
@@ -223,8 +228,36 @@ RUN { \
     echo '    SetEnv SSE_CT "text/event-stream"'; \
     echo '    SecRule ARGS:attack "@streq 1" "id:20810,phase:1,deny,status:403,log"'; \
     echo '</Location>'; \
+    echo '# The near-miss must be INSPECTED for its delay to mean anything: an'; \
+    echo '# uninspected type streams by design (issue #60), so list it.'; \
     echo '<Location "/sse-nearmiss">'; \
     echo '    SetEnv SSE_CT "text/event-streamx"'; \
+    echo '    SecResponseBodyMimeType text/event-streamx'; \
+    echo '</Location>'; \
+    echo '# The delayed-body cap only applies while a body is inspected; the bulk'; \
+    echo '# CGI sends application/octet-stream, so list it for the cap tests.'; \
+    echo '<Location "/bulk-delayed">'; \
+    echo '    SecResponseBodyMimeType application/octet-stream'; \
+    echo '</Location>'; \
+    echo '# --- Header delay only when the body will be inspected (issue #60) ---'; \
+    echo '# Body access off: the stream must reach the client at once, and a'; \
+    echo '# phase-4 rule on a non-body variable must still deny cleanly.'; \
+    echo '# Needs coraza_is_response_body_accessible (libcoraza >= 1.8); on 1.7'; \
+    echo '# the module cannot see the Off and still delays -- the test adapts.'; \
+    echo '<Location "/stream-json-off">'; \
+    echo '    SecResponseBodyAccess Off'; \
+    echo '</Location>'; \
+    echo '# Content-Type outside SecResponseBodyMimeType: not inspected on any'; \
+    echo '# libcoraza. A phase-4 rule on a non-body variable must still deny.'; \
+    echo '<Location "/stream-json-mime">'; \
+    echo '    SecResponseBodyAccess On'; \
+    echo '    SecResponseBodyMimeType text/html'; \
+    echo '    SecRule ARGS:attack "@streq 1" "id:20811,phase:4,deny,status:403,log"'; \
+    echo '</Location>'; \
+    echo '# Inspected (application/json is in the default MIME list): the delay'; \
+    echo '# is the intended behaviour, so this one must still be held until EOS.'; \
+    echo '<Location "/stream-json-on">'; \
+    echo '    SecResponseBodyAccess On'; \
     echo '</Location>'; \
     echo '# --- Config merging ---'; \
     echo '<Location "/merge-engine-off">'; \
