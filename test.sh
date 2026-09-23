@@ -807,6 +807,7 @@ echo "--- Header delay only when the body is inspected (issue #60) ---"
 # immediately; one that will be inspected is legitimately held until EOS. A
 # phase-4 rule on a non-body variable must still produce a clean 403 with body
 # access off: phase 4 is finalised before the headers go out, not skipped.
+check_stream "Body access off: stream reaches client (not delayed)"    "$URL/stream-json-off"   '"events"' present
 check_stream "MIME mismatch: stream reaches client (not delayed)"      "$URL/stream-json-mime"  '"events"' present
 check_stream "Body inspected: stream still delayed until EOS"          "$URL/stream-json-on"    '"events"' absent
 check_curl   "MIME mismatch: phase-4 ARGS rule still denies cleanly"    "$URL/stream-json-mime?attack=1" 403 --max-time 5
@@ -962,20 +963,6 @@ check_no_crash "Request body reaches the handler (issue #34)"
 echo ""
 
 if [ -n "$CONTAINER" ]; then
-    echo "--- Header delay vs SecResponseBodyAccess Off (issue #60) ---"
-    # Seeing "Off" needs coraza_is_response_body_accessible (libcoraza >= 1.8).
-    # The module logs at load time whether it found the symbol; the expectation
-    # follows that, so the test is honest on both library generations.
-    if docker logs "$CONTAINER" 2>&1 | grep -q "coraza_is_response_body_accessible): available"; then
-        check_stream "Body access off: stream reaches client (libcoraza exports the predicate)" \
-            "$URL/stream-json-off" '"events"' present
-    else
-        check_stream "Body access off: still delayed (libcoraza lacks the predicate -- known limitation)" \
-            "$URL/stream-json-off" '"events"' absent
-    fi
-    check_no_crash "Header delay vs SecResponseBodyAccess Off"
-    echo ""
-
     echo "--- Config validation: ruleless \"Coraza On\" is rejected (issue #39) ---"
     # "Coraza On" with no rule directive anywhere must fail httpd -t rather
     # than start an empty WAF; one rule anywhere makes it pass, and "Coraza
@@ -1099,7 +1086,6 @@ CorazaRules "SecRuleEngine On"' 0 'Syntax OK'
     CRASH_SEEN=$(printf '%s' "$lines" | grep -c .)
     echo ""
 else
-    echo "--- Header delay vs SecResponseBodyAccess Off (skipped: use --container=NAME) ---"
     echo "--- Config validation tests (skipped: use --container=NAME) ---"
     echo "--- Audit log tests (skipped: use --container=NAME) ---"
     echo "--- Error page audit (skipped: use --container=NAME) ---"

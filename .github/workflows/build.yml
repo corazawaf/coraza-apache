@@ -17,10 +17,11 @@ jobs:
     strategy:
       matrix:
         mpm: [event, prefork]
-        # The module requires libcoraza >= 1.7.0 (coraza_dl_open gates on
-        # coraza_version_num); older releases are rejected at startup.
+        # The module requires libcoraza >= 1.8.0 (coraza_dl_open gates on
+        # coraza_version_num; 1.8 exports coraza_is_response_body_accessible);
+        # older releases are rejected at startup.
         # renovate: datasource=github-releases depName=corazawaf/libcoraza
-        libcoraza: [v1.7.0]
+        libcoraza: [v1.8.0]
 
     steps:
       - name: Checkout repo
@@ -81,7 +82,7 @@ jobs:
           ~/go/bin/go-ftw run --cloud --config tests/ftw-crs.yml -d /tmp/coreruleset-${CRS_VERSION}/tests/regression/tests/
 
       - name: Extract module artifact
-        if: matrix.mpm == 'event' && matrix.libcoraza == 'v1.7.0'
+        if: matrix.mpm == 'event' && matrix.libcoraza == 'v1.8.0'
         run: |
           docker cp \
             coraza-apache-${{ matrix.mpm }}:/usr/local/apache2/modules/mod_coraza.so \
@@ -92,7 +93,7 @@ jobs:
         run: docker stop coraza-apache-${{ matrix.mpm }} || true
 
       - name: Upload module artifact
-        if: matrix.mpm == 'event' && matrix.libcoraza == 'v1.7.0'
+        if: matrix.mpm == 'event' && matrix.libcoraza == 'v1.8.0'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: mod_coraza-linux-amd64

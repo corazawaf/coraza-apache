@@ -106,7 +106,7 @@ typedef struct {
 
 /*
  * Fail-closed check for the coraza_process_* calls. coraza_dl_open() requires
- * libcoraza >= 1.7.0, which uses the tri-state coraza_result_t contract:
+ * libcoraza >= 1.8.0, which uses the tri-state coraza_result_t contract:
  * CORAZA_ERROR (-1), CORAZA_OK (0), CORAZA_INTERRUPTION (1). Only CORAZA_ERROR
  * is a failure -- an interruption is the normal outcome of a deny rule and must
  * fall through to coraza_process_intervention() so the rule's own status is
@@ -161,9 +161,6 @@ int coraza_dl_open(server_rec *s);
 /* dlclose libcoraza.so. */
 void coraza_dl_close(server_rec *s);
 
-/* Optional libcoraza >= 1.8 predicate (corazawaf/libcoraza#128); declared here
- * because the 1.7 header does not know it. 1 when the symbol is missing. */
-int coraza_is_response_body_accessible(coraza_transaction_t t);
 
 /* mod_coraza_phase1.c */
 

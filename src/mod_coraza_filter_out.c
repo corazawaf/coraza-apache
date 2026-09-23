@@ -170,8 +170,7 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
          * against SecResponseBodyMimeType, the access flag is consulted
          * separately when the body is read -- so under SecResponseBodyAccess
          * Off it still says 1 for a listed type. coraza_is_response_body_
-         * accessible() is the missing half (libcoraza >= 1.8; 1 on older
-         * libraries, i.e. MIME-only as before).
+         * accessible() is the missing half (libcoraza >= 1.8, the floor).
          */
         ctx->response_body_processable =
             coraza_is_response_body_accessible(ctx->transaction)

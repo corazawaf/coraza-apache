@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **209 tests** against a Docker
+The integration test suite (`test.sh`) runs **208 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (209 tests, event MPM)
+# Full suite (208 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (138 tests, no audit/debug log checks, no MPM verification)
+# Minimal (139 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+70 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+68 tests) |
 
 ## Test Categories
 
@@ -184,7 +184,7 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
-### Crash and worker-health sweep (42 tests: 41 sweeps + 1 self-test, requires `--container`)
+### Crash and worker-health sweep (41 tests: 40 sweeps + 1 self-test, requires `--container`)
 
 Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
 that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
@@ -202,23 +202,16 @@ a matching request is logged, a non-matching one is not, and `noauditlog`
 suppresses the entry even on a match (per-location audit files, checked via
 `docker exec`).
 
-### Header delay only when the body is inspected (3 tests)
+### Header delay only when the body is inspected (4 tests)
 
 `/stream-json-*` is a CGI that sends headers and a first chunk, holds the
-response for 8 s, then finishes. A Content-Type outside
-`SecResponseBodyMimeType` must deliver the first chunk within `check_stream`'s
-4 s window (issue #60); with body inspection on it must not (the delay is the
-intended behaviour). A phase-4 `ARGS` rule on the uninspected location must
-still return a clean 403, proving phase 4 is finalised before the headers go
-out rather than skipped.
-
-### Header delay vs `SecResponseBodyAccess Off` (2 tests, requires `--container`)
-
-Seeing `Off` needs `coraza_is_response_body_accessible` (libcoraza >= 1.8,
-corazawaf/libcoraza#128). The module logs at load time whether the symbol was
-found, and the expectation follows: the stream reaches the client when it was,
-and is documented as still delayed (known limitation) when it was not. Plus the
-section's crash sweep.
+response for 8 s, then finishes. `SecResponseBodyAccess Off` and a Content-Type
+outside `SecResponseBodyMimeType` must both deliver the first chunk within
+`check_stream`'s 4 s window (issue #60; the `Off` case needs
+`coraza_is_response_body_accessible`, libcoraza >= 1.8, the module's floor).
+With body inspection on it must not (the delay is the intended behaviour). A
+phase-4 `ARGS` rule on the uninspected location must still return a clean 403,
+proving phase 4 is finalised before the headers go out rather than skipped.
 
 ### Delayed response cap log (1 test, requires `--container`)
 
@@ -260,7 +253,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 209-test suite passes after all restarts.
+restarts (1s apart). Full 208-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered

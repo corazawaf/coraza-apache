@@ -11,7 +11,7 @@ RUN set -eux; \
         bash \
         make
 
-ARG LIBCORAZA_VERSION=v1.7.0
+ARG LIBCORAZA_VERSION=v1.8.0
 
 RUN set -eux; \
     wget https://github.com/corazawaf/libcoraza/tarball/${LIBCORAZA_VERSION} -O /tmp/libcoraza.tar.gz; \
@@ -242,8 +242,8 @@ RUN { \
     echo '# --- Header delay only when the body will be inspected (issue #60) ---'; \
     echo '# Body access off: the stream must reach the client at once, and a'; \
     echo '# phase-4 rule on a non-body variable must still deny cleanly.'; \
-    echo '# Needs coraza_is_response_body_accessible (libcoraza >= 1.8); on 1.7'; \
-    echo '# the module cannot see the Off and still delays -- the test adapts.'; \
+    echo '# Body access off: not inspected, must stream (libcoraza >= 1.8 exports'; \
+    echo '# the predicate that makes the Off visible; 1.8 is the module floor).'; \
     echo '<Location "/stream-json-off">'; \
     echo '    SecResponseBodyAccess Off'; \
     echo '</Location>'; \
