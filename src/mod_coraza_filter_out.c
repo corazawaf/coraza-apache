@@ -188,20 +188,6 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
         }
 
         /*
-         * SSE / streaming responses: phases 1-3 are done. The body loop below
-         * block-reads every bucket before forwarding the brigade, which drains
-         * a streaming response pipe and holds it until EOS -- an SSE stream
-         * never sends EOS, so the client would receive nothing. Step out of the
-         * filter chain and let the response stream. Phase 4 cannot run on a body
-         * that never ends anyway; this is the same trade-off 101 Switching
-         * Protocols accepts (see coraza_is_sse_response).
-         */
-        if (coraza_is_sse_response(r)) {
-            ap_remove_output_filter(f);
-            return ap_pass_brigade(f->next, bb);
-        }
-
-        /*
          * Body not inspected (SecResponseBodyAccess Off, or a Content-Type
          * outside SecResponseBodyMimeType): nothing the body loop below could
          * feed the engine can change the phase-4 outcome, and every non-body
@@ -214,6 +200,11 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
          * (chunked JSON, NDJSON) until EOS or the delayed-body cap (issue #60).
          * The EOS path is never reached for this response, so phase 4 is not
          * run twice.
+         *
+         * This runs before the SSE shortcut below on purpose: text/event-stream
+         * is normally outside SecResponseBodyMimeType, so an SSE response takes
+         * this path and phase 4 still runs for it -- a phase-4 rule on ARGS or
+         * TX denies the stream cleanly instead of being bypassed.
          */
         if (!ctx->response_body_processable) {
             if (coraza_process_failed(
@@ -236,6 +227,23 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             ap_remove_output_filter(f);
             return ap_pass_brigade(f->next, bb);
         }
+
+        /*
+         * SSE whose body IS inspected (text/event-stream listed in
+         * SecResponseBodyMimeType): phases 1-3 are done. The body loop below
+         * block-reads every bucket before forwarding the brigade, which drains
+         * a streaming response pipe and holds it until EOS -- an SSE stream
+         * never sends EOS, so the client would receive nothing. Step out of the
+         * filter chain and let the response stream. Phase 4 cannot run on a body
+         * that never ends anyway; this is the same trade-off 101 Switching
+         * Protocols accepts (see coraza_is_sse_response). The uninspected SSE
+         * case is handled above, with phase 4 finalized first.
+         */
+        if (coraza_is_sse_response(r)) {
+            ap_remove_output_filter(f);
+            return ap_pass_brigade(f->next, bb);
+        }
+
 
         /* Begin header delay — skip for HEAD (no body), subrequests (internal),
          * and error responses (already have final status, e.g. ErrorDocument) */

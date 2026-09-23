@@ -799,6 +799,9 @@ echo "--- SSE streaming (header-delay skip) ---"
 check_stream "SSE: stream reaches client (not delayed)"   "$URL/sse-stream"          "data: tick" present
 check_stream "SSE near-miss: text/event-streamx delayed"  "$URL/sse-nearmiss"        "data: tick" absent
 check_curl   "SSE: phase-1 rule still blocks (no bypass)" "$URL/sse-stream?attack=1" 403 --max-time 5
+# The SSE exemption must not skip phase 4 either: the body is uninspected, so
+# phase 4 is finalised before the headers go out and a rule on ARGS still denies.
+check_curl   "SSE: phase-4 ARGS rule still blocks (no bypass)" "$URL/sse-stream?attack4=1" 403 --max-time 5
 check_no_crash "SSE streaming (header-delay skip)"
 echo ""
 

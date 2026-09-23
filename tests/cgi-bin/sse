@@ -6,6 +6,13 @@
 # WITHOUT ever sending end-of-stream. Each line is written by a separate
 # /usr/bin/printf process so it is flushed to Apache immediately -- shell
 # builtins would buffer and defeat the streaming the test relies on.
+# Never let any process of this fixture die of SIGPIPE. Once a phase-4 deny
+# (or a client that left) closes the pipe, mod_cgid terminates the script, and
+# a printf still writing at that moment would be orphaned to httpd -- PID 1 in
+# the container -- and logged as an AH00052 "exit signal Broken pipe", which
+# the crash sweep flags. Ignoring SIGPIPE is inherited by the children: the
+# write fails with EPIPE instead and the process exits normally.
+trap '' PIPE
 /usr/bin/printf 'Content-Type: %s\r\n\r\n' "${SSE_CT:-text/event-stream}"
 
 # Endless: never send EOS. Apache terminates the CGI when the client

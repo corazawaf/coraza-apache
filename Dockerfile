@@ -227,6 +227,10 @@ RUN { \
     echo '<Location "/sse-stream">'; \
     echo '    SetEnv SSE_CT "text/event-stream"'; \
     echo '    SecRule ARGS:attack "@streq 1" "id:20810,phase:1,deny,status:403,log"'; \
+    echo '    # text/event-stream is not in SecResponseBodyMimeType, so the body is'; \
+    echo '    # not inspected; phase 4 must still run on non-body variables and'; \
+    echo '    # deny cleanly before the stream starts (issue #60 review).'; \
+    echo '    SecRule ARGS:attack4 "@streq 1" "id:20812,phase:4,deny,status:403,log"'; \
     echo '</Location>'; \
     echo '# The near-miss must be INSPECTED for its delay to mean anything: an'; \
     echo '# uninspected type streams by design (issue #60), so list it.'; \

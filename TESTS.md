@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **208 tests** against a Docker
+The integration test suite (`test.sh`) runs **209 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (208 tests, event MPM)
+# Full suite (209 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (139 tests, no audit/debug log checks, no MPM verification)
+# Minimal (140 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -212,6 +212,9 @@ outside `SecResponseBodyMimeType` must both deliver the first chunk within
 With body inspection on it must not (the delay is the intended behaviour). A
 phase-4 `ARGS` rule on the uninspected location must still return a clean 403,
 proving phase 4 is finalised before the headers go out rather than skipped.
+The same holds for SSE: `text/event-stream` is outside the MIME list, so an SSE
+response takes this path too and a phase-4 `ARGS` rule denies it cleanly (the
+SSE shortcut only applies to an inspected stream, which can never finish).
 
 ### Delayed response cap log (1 test, requires `--container`)
 
@@ -253,7 +256,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 208-test suite passes after all restarts.
+restarts (1s apart). Full 209-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered
