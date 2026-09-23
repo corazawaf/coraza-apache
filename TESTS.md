@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+71 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+70 tests) |
 
 ## Test Categories
 
