@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **203 tests** against a Docker
+The integration test suite (`test.sh`) runs **211 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,7 +10,7 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (203 tests, event MPM)
+# Full suite (211 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
 # Minimal (135 tests, no audit/debug log checks, no MPM verification)
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+67 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+75 tests) |
 
 ## Test Categories
 
@@ -128,12 +128,21 @@ sent over a socket because curl cannot emit arbitrary versions.
 | HTTP/1.1 does not trip the raw rule | control on `/protocol-raw` (200) |
 | CRS 920430 rejects HTTP/4.0 on / | the version policy is enforceable through the connector (403) |
 
-### Config validation (3 tests, requires `--container`)
+### Config validation (11 tests, requires `--container`)
 
 `httpd -t` inside the container on the image's own `httpd.conf` minus the rules
 include, plus one delta per case: `Coraza On` with no rule anywhere fails with
 the fail-closed diagnostic; `Coraza On` plus a single rule passes; `Coraza Off`
 without rules passes.
+
+`SecRemoteRules` (issue #62) is refused at `httpd -t` from all three entry
+points: the native directive, `CorazaRules` text and a `CorazaRulesFile`
+(reported with resolved path and record line, including a name split by a `\`
+continuation, a directive past the 4 KiB read buffer on a last line without
+newline, and a relative path resolved against `ServerRoot`). Controls: a
+commented-out `SecRemoteRules`, the words at the start of a continuation line
+or inside a backtick action list, `SecRemoteRulesX`, and
+`SecRemoteRulesFailAction` all pass.
 
 ### Custom Error Pages (7 tests)
 
