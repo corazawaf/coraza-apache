@@ -11,6 +11,7 @@
 #include "mod_coraza.h"
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <apr_thread_mutex.h>
 
@@ -311,6 +312,270 @@ cmd_coraza_enable(cmd_parms *cmd, void *dcfg, int flag)
     return NULL;
 }
 
+/*
+ * Directives the Coraza engine refuses outright. They parse like any other
+ * Sec* text here and only fail inside coraza_new_waf() -- in every child,
+ * after fork -- with nothing to warn the operator at `httpd -t` (issue #62).
+ * Refuse them at configuration time instead. Only SecRemoteRules qualifies
+ * as of coraza 3.7: SecRemoteRulesFailAction parses fine.
+ */
+static const char *const coraza_unsupported_directives[] = {
+    "SecRemoteRules"
+};
+
+/*
+ * Streaming scan of SecLang text for the directives above, mirroring how
+ * coraza's parser (internal/seclang/parser.go, parseString) assembles logical
+ * records from physical lines: each line is trimmed; blank and "#" lines are
+ * ignored wherever they appear; a line ending in "\" continues the record on
+ * the next line with the backslash removed and nothing inserted; a line ending
+ * in "`" opens an action list that runs until a line starting with "`". The
+ * directive is the first space-delimited word of the assembled record, matched
+ * case-insensitively. The state is bounded (line counters, a few flags, the
+ * first word of the current record), so a rules file of any size can be
+ * checked from a small read buffer. A word longer than any directive name we
+ * know is not ours.
+ */
+typedef struct {
+    unsigned  line;          /* 1-based physical line being read */
+    unsigned  rec_line;      /* line where the current record started */
+    unsigned  in_record:1;   /* a record is being assembled */
+    unsigned  in_backticks:1;
+    unsigned  word_done:1;   /* the record's first word is complete */
+    char      first;         /* first non-blank byte of this line, or 0 */
+    char      last;          /* last non-blank byte of this line so far */
+    size_t    wlen;          /* bytes collected in word[] */
+    char      word[32];
+} coraza_rules_scan_t;
+
+static void
+coraza_rules_scan_init(coraza_rules_scan_t *s)
+{
+    memset(s, 0, sizeof(*s));
+    s->line = 1;
+}
+
+/* The record is complete: is its directive one we refuse? */
+static const char *
+coraza_rules_scan_word(const coraza_rules_scan_t *s)
+{
+    size_t i;
+
+    for (i = 0;
+         i < sizeof(coraza_unsupported_directives)
+             / sizeof(coraza_unsupported_directives[0]);
+         i++)
+    {
+        const char *d = coraza_unsupported_directives[i];
+        if (s->wlen == strlen(d) && strncasecmp(s->word, d, s->wlen) == 0) {
+            return d;
+        }
+    }
+    return NULL;
+}
+
+/* A physical line is complete: does it end the record, and if so, is the
+ * record refused? */
+static const char *
+coraza_rules_scan_eol(coraza_rules_scan_t *s)
+{
+    const char *bad;
+    int cont;
+
+    if (s->first == 0 || s->first == '#') {
+        s->first = 0;                      /* blank or comment: ignored */
+        s->last = 0;
+        return NULL;
+    }
+
+    if (!s->in_backticks && s->last == '`') {
+        s->in_backticks = 1;
+    } else if (s->in_backticks && s->first == '`') {
+        s->in_backticks = 0;
+    }
+
+    if (s->in_backticks) {
+        cont = 1;
+    } else if (s->last == '\\') {
+        cont = 1;
+        /* The backslash is dropped and the next line is glued to this one,
+         * so a word cut by the continuation goes on collecting. */
+        if (!s->word_done && s->wlen > 0 && s->word[s->wlen - 1] == '\\') {
+            s->wlen--;
+        }
+    } else {
+        cont = 0;
+    }
+
+    s->first = 0;
+    s->last = 0;
+
+    if (cont) {
+        return NULL;
+    }
+
+    bad = coraza_rules_scan_word(s);
+    s->in_record = 0;
+    s->word_done = 0;
+    s->wlen = 0;
+    return bad;
+}
+
+/* Feed the next chunk. Returns the refused directive as soon as its record is
+ * complete (s->rec_line then tells where it started), or NULL to keep
+ * feeding. */
+static const char *
+coraza_rules_scan(coraza_rules_scan_t *s, const char *p, size_t len)
+{
+    const char *end = p + len;
+    const char *bad;
+
+    for (; p < end; p++) {
+        if (*p == '\n') {
+            bad = coraza_rules_scan_eol(s);
+            if (bad != NULL) {
+                return bad;
+            }
+            s->line++;
+            continue;
+        }
+
+        if (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\v'
+            || *p == '\f')
+        {
+            /* Leading blanks are trimmed; a blank after the word ends it. */
+            if (s->first != 0 && s->first != '#' && s->wlen > 0) {
+                s->word_done = 1;
+            }
+            continue;
+        }
+
+        if (s->first == 0) {
+            s->first = *p;
+            if (*p != '#' && !s->in_record) {
+                s->in_record = 1;
+                s->rec_line = s->line;
+            }
+        }
+        s->last = *p;
+
+        if (s->first == '#' || s->word_done) {
+            continue;
+        }
+        if (s->wlen < sizeof(s->word)) {
+            s->word[s->wlen++] = *p;
+        } else {
+            s->wlen = 0;               /* too long to be a directive we know */
+            s->word_done = 1;
+        }
+    }
+    return NULL;
+}
+
+/* End of input: the last line may lack its '\n'. A record left open by a
+ * trailing continuation is never evaluated by coraza either, but an action
+ * list left open is an error there, so its record is judged on what it has. */
+static const char *
+coraza_rules_scan_done(coraza_rules_scan_t *s)
+{
+    const char *bad;
+
+    bad = coraza_rules_scan_eol(s);
+    if (bad == NULL && s->in_backticks) {
+        bad = coraza_rules_scan_word(s);
+    }
+    return bad;
+}
+
+#define CORAZA_UNSUPPORTED_MSG \
+    "is not implemented by the Coraza engine; the WAF would fail to build " \
+    "in every child process after fork. Remove it: rules must come from " \
+    "local files or inline text"
+
+/* Refuse inline rule text (CorazaRules, or a native Sec* directive
+ * reconstructed by cmd_sec_directive) that carries an unsupported directive.
+ * Returns the error string for the directive handler, or NULL. */
+static const char *
+coraza_check_rules_text(cmd_parms *cmd, const char *text)
+{
+    coraza_rules_scan_t scan;
+    const char *bad;
+
+    coraza_rules_scan_init(&scan);
+    bad = coraza_rules_scan(&scan, text, strlen(text));
+    if (bad == NULL) {
+        bad = coraza_rules_scan_done(&scan);
+    }
+    if (bad == NULL) {
+        return NULL;
+    }
+    if (scan.rec_line == 1 && strncmp(text, bad, strlen(bad)) == 0) {
+        return apr_psprintf(cmd->pool, "coraza: \"%s\" " CORAZA_UNSUPPORTED_MSG,
+                            bad);
+    }
+    return apr_psprintf(cmd->pool, "coraza: \"%s\" (%s text, line %u) "
+                        CORAZA_UNSUPPORTED_MSG, bad, cmd->cmd->name,
+                        scan.rec_line);
+}
+
+/* Scan a rules file for unsupported directives before the children try to
+ * load it. Top level only: `Include`d files are not followed. The path is
+ * resolved against ServerRoot like other httpd file directives and stored
+ * resolved, so the children open the very file scanned here. An unreadable
+ * file is a warning rather than an error: the child fails closed on it with
+ * its own message. Returns the error string for the directive handler, or
+ * NULL, and leaves the resolved path in *path. */
+static const char *
+coraza_check_rules_file(cmd_parms *cmd, const char **path)
+{
+    coraza_rules_scan_t scan;
+    apr_file_t *fd;
+    apr_status_t rv;
+    char buf[4096];
+    apr_size_t n;
+    const char *bad = NULL;
+    const char *full;
+
+    full = ap_server_root_relative(cmd->pool, *path);
+    if (full == NULL) {
+        return apr_psprintf(cmd->pool, "coraza: invalid rules file path \"%s\"",
+                            *path);
+    }
+    *path = full;
+
+    rv = apr_file_open(&fd, full, APR_FOPEN_READ, APR_FPROT_OS_DEFAULT,
+                       cmd->temp_pool);
+    if (rv != APR_SUCCESS) {
+        ap_log_error(APLOG_MARK, APLOG_WARNING, rv, cmd->server,
+                     "coraza: cannot read rules file \"%s\" at config time; "
+                     "it will only be validated by the child processes", full);
+        return NULL;
+    }
+
+    coraza_rules_scan_init(&scan);
+    for (;;) {
+        n = sizeof(buf);
+        rv = apr_file_read(fd, buf, &n);
+        if (rv != APR_SUCCESS) {
+            if (APR_STATUS_IS_EOF(rv)) {
+                bad = coraza_rules_scan_done(&scan);
+            }
+            break;
+        }
+        bad = coraza_rules_scan(&scan, buf, n);
+        if (bad != NULL) {
+            break;
+        }
+    }
+    apr_file_close(fd);
+
+    if (bad == NULL) {
+        return NULL;
+    }
+    return apr_psprintf(cmd->pool, "coraza: \"%s\" (%s:%u) "
+                        CORAZA_UNSUPPORTED_MSG, bad, full, scan.rec_line);
+}
+
 /* Handle "CorazaRules <rule>" — store an inline rule string.
  * Server-level rules (cmd->path==NULL) also go into scf->rules for the
  * fallback WAF; per-dir rules stay in the dir_conf only. */
@@ -320,6 +585,13 @@ cmd_coraza_rules(cmd_parms *cmd, void *dcfg, const char *arg)
     coraza_dir_conf_t *dcf = (coraza_dir_conf_t *)dcfg;
     coraza_server_conf_t *scf;
     coraza_rule_entry_t *entry;
+    const char *err;
+
+    /* Fail at httpd -t, not in every child after fork (issue #62). */
+    err = coraza_check_rules_text(cmd, arg);
+    if (err != NULL) {
+        return err;
+    }
 
     entry = apr_array_push(dcf->rules);
     entry->type = CORAZA_RULE_INLINE;
@@ -340,15 +612,22 @@ cmd_coraza_rules(cmd_parms *cmd, void *dcfg, const char *arg)
     return NULL;
 }
 
-/* Handle "CorazaRulesFile <path>" — store a rules file path.
- * Paths with relative @pmFromFile data are resolved by Coraza relative
- * to the rules file, not the Apache config. */
+/* Handle "CorazaRulesFile <path>" — store a rules file path, resolved
+ * against ServerRoot. Paths with relative @pmFromFile data are resolved by
+ * Coraza relative to the rules file, not the Apache config. */
 static const char *
 cmd_coraza_rules_file(cmd_parms *cmd, void *dcfg, const char *arg)
 {
     coraza_dir_conf_t *dcf = (coraza_dir_conf_t *)dcfg;
     coraza_server_conf_t *scf;
     coraza_rule_entry_t *entry;
+    const char *err;
+
+    /* Fail at httpd -t, not in every child after fork (issue #62). */
+    err = coraza_check_rules_file(cmd, &arg);
+    if (err != NULL) {
+        return err;
+    }
 
     entry = apr_array_push(dcf->rules);
     entry->type = CORAZA_RULE_FILE;
