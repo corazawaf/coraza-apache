@@ -473,11 +473,18 @@ coraza_rules_scan(coraza_rules_scan_t *s, const char *p, size_t len)
 }
 
 /* End of input: the last line may lack its '\n'. A record left open by a
- * trailing continuation is never evaluated by coraza either. */
+ * trailing continuation is never evaluated by coraza either, but an action
+ * list left open is an error there, so its record is judged on what it has. */
 static const char *
 coraza_rules_scan_done(coraza_rules_scan_t *s)
 {
-    return coraza_rules_scan_eol(s);
+    const char *bad;
+
+    bad = coraza_rules_scan_eol(s);
+    if (bad == NULL && s->in_backticks) {
+        bad = coraza_rules_scan_word(s);
+    }
+    return bad;
 }
 
 #define CORAZA_UNSUPPORTED_MSG \

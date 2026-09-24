@@ -990,6 +990,7 @@ CorazaRules "SecRuleEngine On"' 0 'Syntax OK'
             "SecRemoteRules https://example.org/rules.conf" \
             "    id:3,phase:1,pass" \
             "\`" > /tmp/ok.rules
+        printf "%s\n" "SecRuleEngine On" "SecRemoteRules https://example.org/rules.conf \`" "  id:4" > /tmp/open.rules
         cp /tmp/remote.rules /usr/local/apache2/conf/remote-rel.rules'
     check_config_validation "native SecRemoteRules directive fails validation" \
         'Coraza On
@@ -1006,6 +1007,9 @@ CorazaRulesFile /tmp/split.rules' 1 '"SecRemoteRules" (/tmp/split.rules:2) is no
     check_config_validation "SecRemoteRules past the 4 KiB read buffer, no trailing newline" \
         'Coraza On
 CorazaRulesFile /tmp/big.rules' 1 '"SecRemoteRules" (/tmp/big.rules:803) is not implemented'
+    check_config_validation "SecRemoteRules opening an unclosed backtick list is still caught" \
+        'Coraza On
+CorazaRulesFile /tmp/open.rules' 1 '"SecRemoteRules" (/tmp/open.rules:2) is not implemented'
     check_config_validation "relative rules file path resolves against ServerRoot" \
         'Coraza On
 CorazaRulesFile conf/remote-rel.rules' 1 '(/usr/local/apache2/conf/remote-rel.rules:3) is not implemented'
