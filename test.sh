@@ -979,6 +979,63 @@ CorazaRules "SecRuleEngine On"' 0 'Syntax OK'
         'Coraza Off' 0 'Syntax OK'
     echo ""
 
+    echo "--- Config validation: SecRemoteRules is rejected at httpd -t (issue #62) ---"
+    # The engine does not implement SecRemoteRules and rules only reach it in
+    # child_init, so without this check httpd -t passes and every child dies.
+    # Native directive, CorazaRules text and CorazaRulesFile content are all
+    # covered; records are assembled the way coraza's parser does it.
+    docker exec "$CONTAINER" sh -c '
+        printf "%s\n" "SecRuleEngine On" "# a comment line, then the offending directive" \
+            "    secRemoteRules https://example.org/rules.conf" > /tmp/remote.rules
+        printf "%s\n" "SecRuleEngine On" "SecRemoteRul\\" "    es https://example.org/rules.conf" > /tmp/split.rules
+        { printf "%s\n" "SecRuleEngine On"
+          printf "SecRule ARGS \"@rx %s\" \"id:1,phase:1,pass\"\n" "$(head -c 5000 /dev/zero | tr "\0" a)"
+          i=0; while [ $i -lt 800 ]; do printf "# filler\n"; i=$((i+1)); done
+          printf "SecRemoteRules https://example.org/rules.conf"; } > /tmp/big.rules
+        printf "%s\n" "SecRuleEngine On" \
+            "# SecRemoteRules https://example.org/rules.conf   -- commented out" \
+            "SecRemoteRulesFailAction Abort" \
+            "SecRemoteRulesX not-a-real-directive-but-not-ours-to-refuse" \
+            "SecRule ARGS \"@rx foo\" \\" \
+            "    # a comment inside a continued record is ignored, the record goes on" \
+            "" \
+            "SecRemoteRules https://example.org/rules.conf is only text in this msg\" \\" \
+            "    \"id:2,phase:1,pass\"" \
+            "SecRule ARGS \"@rx bar\" \`" \
+            "SecRemoteRules https://example.org/rules.conf" \
+            "    id:3,phase:1,pass" \
+            "\`" > /tmp/ok.rules
+        printf "%s\n" "SecRuleEngine On" "SecRemoteRules https://example.org/rules.conf \`" "  id:4" > /tmp/open.rules
+        cp /tmp/remote.rules /usr/local/apache2/conf/remote-rel.rules'
+    check_config_validation "native SecRemoteRules directive fails validation" \
+        'Coraza On
+SecRemoteRules https://example.org/rules.conf' 1 '"SecRemoteRules" is not implemented by the Coraza engine'
+    check_config_validation "SecRemoteRules inside CorazaRules text fails validation" \
+        'Coraza On
+CorazaRules "SecRemoteRules https://example.org/rules.conf"' 1 '"SecRemoteRules" is not implemented'
+    check_config_validation "SecRemoteRules in a rules file fails validation, with file and line" \
+        'Coraza On
+CorazaRulesFile /tmp/remote.rules' 1 '"SecRemoteRules" (/tmp/remote.rules:3) is not implemented'
+    check_config_validation "SecRemoteRules split by a line continuation is still caught" \
+        'Coraza On
+CorazaRulesFile /tmp/split.rules' 1 '"SecRemoteRules" (/tmp/split.rules:2) is not implemented'
+    check_config_validation "SecRemoteRules past the 4 KiB read buffer, no trailing newline" \
+        'Coraza On
+CorazaRulesFile /tmp/big.rules' 1 '"SecRemoteRules" (/tmp/big.rules:803) is not implemented'
+    check_config_validation "SecRemoteRules opening an unclosed backtick list is still caught" \
+        'Coraza On
+CorazaRulesFile /tmp/open.rules' 1 '"SecRemoteRules" (/tmp/open.rules:2) is not implemented'
+    check_config_validation "relative rules file path resolves against ServerRoot" \
+        'Coraza On
+CorazaRulesFile conf/remote-rel.rules' 1 '(/usr/local/apache2/conf/remote-rel.rules:3) is not implemented'
+    check_config_validation "commented, continued and backtick-quoted SecRemoteRules text passes" \
+        'Coraza On
+CorazaRulesFile /tmp/ok.rules' 0 'Syntax OK'
+    check_config_validation "SecRemoteRulesFailAction is still accepted" \
+        'Coraza On
+SecRemoteRulesFailAction Abort' 0 'Syntax OK'
+    echo ""
+
     echo "--- Delayed response cap log ---"
     # The large delayed response above must have tripped the cap's early flush.
     check_container_log "Cap: flushed delayed headers early"  "flushing headers early"

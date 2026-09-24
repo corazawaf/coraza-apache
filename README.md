@@ -121,6 +121,15 @@ that enables the module without any rules is rejected at startup rather than
 run an empty WAF. Rules that live only in `.htaccess` files are not visible at
 that point.
 
+`SecRemoteRules` is rejected at configuration time: the Coraza engine does not
+implement it, so it would otherwise pass `httpd -t` and then make every child
+process fail to start. Rules must come from local files or inline text. The
+native directive, `CorazaRules` text and the content of each `CorazaRulesFile`
+are checked (backslash continuations and backtick action lists are followed
+the way Coraza's parser does); rules files are scanned at their top level only
+(`Include`d files are not followed). A relative `CorazaRulesFile` path is
+resolved against `ServerRoot`.
+
 **CorazaRequestBodyInMemoryLimit** bytes -- how much of a request body is kept
 in memory for replay to the handler before the remainder is spooled to a temp
 file (default 131072, 128 KiB). The module reads the whole body up front so the
