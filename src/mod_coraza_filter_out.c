@@ -86,6 +86,22 @@ coraza_fail_closed_response(ap_filter_t *f, request_rec *r,
 }
 
 /*
+ * Fail closed on an engine error in phase 3. Nothing has been sent yet (the
+ * header delay has not even started), so a clean 500 error page is generated.
+ */
+static apr_status_t
+coraza_fail_closed_headers(ap_filter_t *f, request_rec *r,
+                           coraza_request_ctx_t *ctx, apr_bucket_brigade *bb)
+{
+    ctx->intervention_triggered = 1;
+    ap_remove_output_filter(f);
+    apr_brigade_cleanup(bb);
+    r->status = HTTP_INTERNAL_SERVER_ERROR;
+    ap_die(HTTP_INTERNAL_SERVER_ERROR, r);
+    return AP_FILTER_ERROR;
+}
+
+/*
  * Output filter: phases 3 (response headers) and 4 (response body).
  *
  * Implements header delay: buffers all output buckets in a pending brigade
@@ -125,22 +141,31 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             if (telts[i].key == NULL) {
                 continue;
             }
-            coraza_add_response_header(ctx->transaction,
+            /* Every engine result is checked (issue #42). */
+            if (CORAZA_CALL_FAILED(coraza_add_response_header(ctx->transaction,
                                        (char *)telts[i].key,
                                        (int)strlen(telts[i].key),
                                        (char *)telts[i].val,
-                                       telts[i].val ? (int)strlen(telts[i].val) : 0);
+                                       telts[i].val ? (int)strlen(telts[i].val) : 0))) {
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                              "coraza: engine error adding response header");
+                return coraza_fail_closed_headers(f, r, ctx, bb);
+            }
         }
 
         /* Content-Type is stored in r->content_type, not in headers_out.
          * Apache's core output filter adds it when serializing the response,
          * but our filter runs before that, so we must add it explicitly. */
         if (r->content_type != NULL) {
-            coraza_add_response_header(ctx->transaction,
+            if (CORAZA_CALL_FAILED(coraza_add_response_header(ctx->transaction,
                                        "Content-Type",
                                        (int)strlen("Content-Type"),
                                        (char *)r->content_type,
-                                       (int)strlen(r->content_type));
+                                       (int)strlen(r->content_type)))) {
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                              "coraza: engine error adding Content-Type header");
+                return coraza_fail_closed_headers(f, r, ctx, bb);
+            }
         }
 
         /* Also send err_headers_out (headers sent even on error) */
@@ -151,18 +176,27 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             if (telts[i].key == NULL) {
                 continue;
             }
-            coraza_add_response_header(ctx->transaction,
+            /* Every engine result is checked (issue #42). */
+            if (CORAZA_CALL_FAILED(coraza_add_response_header(ctx->transaction,
                                        (char *)telts[i].key,
                                        (int)strlen(telts[i].key),
                                        (char *)telts[i].val,
-                                       telts[i].val ? (int)strlen(telts[i].val) : 0);
+                                       telts[i].val ? (int)strlen(telts[i].val) : 0))) {
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                              "coraza: engine error adding response header");
+                return coraza_fail_closed_headers(f, r, ctx, bb);
+            }
         }
 
         status = r->status;
         http_response_ver = r->protocol ? r->protocol : "HTTP/1.1";
 
-        coraza_process_response_headers(ctx->transaction, status,
-                                        (char *)http_response_ver);
+        if (coraza_process_failed(coraza_process_response_headers(ctx->transaction,
+                                      status, (char *)http_response_ver))) {
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                          "coraza: engine error processing response headers");
+            return coraza_fail_closed_headers(f, r, ctx, bb);
+        }
 
         /*
          * "Will the engine inspect this body?" needs both predicates:
@@ -207,9 +241,9 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
          * TX denies the stream cleanly instead of being bypassed.
          */
         if (!ctx->response_body_processable) {
-            if (coraza_process_failed(
-                    coraza_process_response_body(ctx->transaction))) {
-                return coraza_fail_closed_response(f, r, ctx, bb);
+            if (coraza_process_failed(coraza_process_response_body(ctx->transaction))) {
+                /* Nothing sent yet: clean 500, not a reset. */
+                return coraza_fail_closed_headers(f, r, ctx, bb);
             }
             ctx->phase4_done = 1;
 
@@ -278,7 +312,13 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
         rv = apr_bucket_read(b, &data, &len, APR_BLOCK_READ);
         if (rv != APR_SUCCESS) {
-            return rv;
+            /* The bucket could not be read, so it cannot be inspected. Fail
+             * closed like an engine error: while the headers are delayed this
+             * still yields a clean 500 instead of an abandoned pending brigade
+             * with no error page (issue #42). */
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
+                          "coraza: cannot read response bucket for inspection");
+            return coraza_fail_closed_response(f, r, ctx, bb);
         }
 
         /*

@@ -759,6 +759,24 @@ check_source_in_func "empty-WAF fallback releases the coraza_new_waf error strin
 check_source "no libc free() on a libcoraza string" mod_coraza.c '(^|[^[:alnum:]_])free[[:space:]]*\([[:space:]]*(error|err)[[:space:]]*\)' !
 echo ""
 
+echo "--- Source contract: every engine result is checked (issue #42) ---"
+# An engine error on any phase or header submission must fail the request
+# closed, never let it continue uninspected. Every coraza_process_* call goes
+# through coraza_process_failed() and every coraza_add_*/coraza_append_* call
+# through CORAZA_CALL_FAILED(); a call whose name opens a line is a bare,
+# unchecked one. A failing apr_bucket_read() takes the fail-closed path too.
+check_source_in_func "phase 1: connection result checked" mod_coraza_phase1.c coraza_post_read_request 'coraza_process_failed\(coraza_process_connection\('
+check_source_in_func "phase 1: URI result checked" mod_coraza_phase1.c coraza_post_read_request 'coraza_process_failed\(coraza_process_uri\('
+check_source_in_func "phase 1: request header add checked" mod_coraza_phase1.c coraza_post_read_request 'CORAZA_CALL_FAILED\(coraza_add_request_header\('
+check_source_in_func "phase 1: request headers result checked" mod_coraza_phase1.c coraza_post_read_request 'coraza_process_failed\(coraza_process_request_headers\('
+check_source_in_func "phase 3: response header add checked" mod_coraza_filter_out.c coraza_output_filter 'CORAZA_CALL_FAILED\(coraza_add_response_header\('
+check_source_in_func "phase 3: response headers result checked" mod_coraza_filter_out.c coraza_output_filter 'coraza_process_failed\(coraza_process_response_headers\('
+check_source "no bare engine call in phase 1/2" mod_coraza_phase1.c '^[[:space:]]*coraza_(process_(connection|uri|request_headers|request_body)|add_request_header|append_request_body)\(' !
+check_source "no bare engine call in the input filter" mod_coraza_body_in.c '^[[:space:]]*coraza_(process_request_body|append_request_body)\(' !
+check_source "no bare engine call in the output filter" mod_coraza_filter_out.c '^[[:space:]]*coraza_(process_response_(headers|body)|add_response_header|append_response_body)\(' !
+check_source "a failed bucket read does not return bare" mod_coraza_filter_out.c '^[[:space:]]*return rv;' !
+echo ""
+
 echo "--- Request protocol tests ---"
 # REQUEST_PROTOCOL must reach Coraza slash-delimited ("HTTP/1.1"), not bare "1.1".
 check_curl "Protocol: HTTP/1.1 matches REQUEST_PROTOCOL" "$URL/protocol-check" 403
