@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **228 tests** against a Docker
+The integration test suite (`test.sh`) runs **232 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (228 tests, event MPM)
+# Full suite (232 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (150 tests, no audit/debug log checks, no MPM verification)
+# Minimal (154 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -61,14 +61,14 @@ Clean requests return 405 (WAF passes, Apache rejects method).
 | `.htaccess` | 4 | Custom rule block/pass, `Coraza Off` bypass |
 | CRS inheritance | 3 | Server-level CRS rules apply in Directory/.htaccess |
 
-### Per-Phase Processing (8 tests)
+### Per-Phase Processing (12 tests)
 
 | Phase | Hook | Tests |
 |-------|------|-------|
 | Phase 1 | fixups | 2 (ARGS match: deny + pass) |
 | Phase 2 | fixups | 2 (REQUEST_BODY match: deny + pass) |
-| Phase 3 | output filter | 2 (RESPONSE_HEADERS:Content-Type match: deny + pass) |
-| Phase 4 | output filter | 2 (RESPONSE_BODY match: deny + pass) |
+| Phase 3 | output filter | 4 (RESPONSE_HEADERS:Content-Type match: deny + pass; the deny reaches the ErrorDocument, no recursive-error page) |
+| Phase 4 | output filter | 4 (RESPONSE_BODY match: deny + pass; same ErrorDocument checks) |
 
 ### Config Merging (6 tests)
 
@@ -276,7 +276,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 228-test suite passes after all restarts.
+restarts (1s apart). Full 232-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered

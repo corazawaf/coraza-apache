@@ -60,6 +60,22 @@ coraza_is_sse_response(request_rec *r)
 }
 
 /*
+ * Produce the error response for a status decided in this filter, with nothing
+ * sent to the client yet. ap_die() reads r->status as "the error already being
+ * handled": if it is not HTTP_OK the new status is treated as a recursive error,
+ * the ErrorDocument for it is skipped and the canned page carries the
+ * "Additionally, a ... error was encountered while trying to use an
+ * ErrorDocument" boilerplate. Every deny decided here is the first error of
+ * the request, so clear the status first and let ap_die() set it.
+ */
+static void
+coraza_die(int status, request_rec *r)
+{
+    r->status = HTTP_OK;
+    ap_die(status, r);
+}
+
+/*
  * Fail closed on a response-body engine error. If the headers are still delayed
  * nothing has been sent yet, so a clean 500 error page can be generated;
  * otherwise the headers are already on the wire and the response is truncated
@@ -77,7 +93,7 @@ coraza_fail_closed_response(ap_filter_t *f, request_rec *r,
         ctx->headers_delayed = 0;
         apr_brigade_cleanup(ctx->pending_brigade);
         apr_brigade_cleanup(bb);
-        ap_die(HTTP_INTERNAL_SERVER_ERROR, r);
+        coraza_die(HTTP_INTERNAL_SERVER_ERROR, r);
         return AP_FILTER_ERROR;
     }
 
@@ -96,8 +112,7 @@ coraza_fail_closed_headers(ap_filter_t *f, request_rec *r,
     ctx->intervention_triggered = 1;
     ap_remove_output_filter(f);
     apr_brigade_cleanup(bb);
-    r->status = HTTP_INTERNAL_SERVER_ERROR;
-    ap_die(HTTP_INTERNAL_SERVER_ERROR, r);
+    coraza_die(HTTP_INTERNAL_SERVER_ERROR, r);
     return AP_FILTER_ERROR;
 }
 
@@ -216,8 +231,7 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             ctx->intervention_triggered = 1;
             ap_remove_output_filter(f);
             apr_brigade_cleanup(bb);
-            r->status = ret;
-            ap_die(ret, r);
+            coraza_die(ret, r);
             return AP_FILTER_ERROR;
         }
 
@@ -253,8 +267,7 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                 ctx->intervention_triggered = 1;
                 ap_remove_output_filter(f);
                 apr_brigade_cleanup(bb);
-                r->status = ret;
-                ap_die(ret, r);
+                coraza_die(ret, r);
                 return AP_FILTER_ERROR;
             }
 
@@ -377,8 +390,7 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                     ctx->headers_delayed = 0;
                     apr_brigade_cleanup(ctx->pending_brigade);
                     apr_brigade_cleanup(bb);
-                    r->status = ret;
-                    ap_die(ret, r);
+                    coraza_die(ret, r);
                     return AP_FILTER_ERROR;
                 }
                 apr_brigade_cleanup(bb);
@@ -404,8 +416,7 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                 ctx->headers_delayed = 0;
                 apr_brigade_cleanup(ctx->pending_brigade);
                 apr_brigade_cleanup(bb);
-                r->status = ret;
-                ap_die(ret, r);
+                coraza_die(ret, r);
                 return AP_FILTER_ERROR;
             }
             apr_brigade_cleanup(bb);

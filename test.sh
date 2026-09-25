@@ -807,6 +807,13 @@ check "Phase 3: deny on Content-Type"       "$URL/phase3"                       
 check "Phase 3: pass no match"              "$URL/phase3-pass"                     200
 check "Phase 4: deny on body content"       "$URL/phase4"                          403
 check "Phase 4: pass no match"              "$URL/phase4-pass"                     200
+# A deny decided in the output filter is the request's first error: it must
+# reach the configured ErrorDocument like a phase-1/2 deny, not httpd's canned
+# page with the "recursive error" boilerplate.
+check_body "Phase 3: deny serves the custom error page"     "$URL/phase3" 403 "CORAZA_CUSTOM_ERROR_PAGE"
+check_body "Phase 3: deny is not a recursive error"         "$URL/phase3" 403 "Additionally" "!"
+check_body "Phase 4: deny serves the custom error page"     "$URL/phase4" 403 "CORAZA_CUSTOM_ERROR_PAGE"
+check_body "Phase 4: deny is not a recursive error"         "$URL/phase4" 403 "Additionally" "!"
 check_no_crash "Response phase tests (3+4)"
 echo ""
 
