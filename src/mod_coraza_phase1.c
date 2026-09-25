@@ -142,9 +142,17 @@ coraza_post_read_request(request_rec *r)
         char *server_ip = r->connection->local_ip ?
             r->connection->local_ip : "0.0.0.0";
 
-        coraza_process_connection(ctx->transaction,
-                                 client_ip, client_port,
-                                 server_ip, server_port);
+        /* Every engine result is checked (issue #42): an error here means
+         * the transaction is not fully populated, so fail closed rather than
+         * run the rules on incomplete data. */
+        if (coraza_process_failed(coraza_process_connection(ctx->transaction,
+                                      client_ip, client_port,
+                                      server_ip, server_port))) {
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                          "coraza: engine error processing connection info");
+            ctx->intervention_triggered = 1;
+            return HTTP_INTERNAL_SERVER_ERROR;
+        }
 
         ret = coraza_process_intervention(ctx->transaction, r, 1);
         if (ret > 0) {
@@ -192,10 +200,15 @@ coraza_post_read_request(request_rec *r)
             http_version = r->protocol;
         }
 
-        coraza_process_uri(ctx->transaction,
-                           (char *)r->unparsed_uri,
-                           (char *)r->method,
-                           (char *)http_version);
+        if (coraza_process_failed(coraza_process_uri(ctx->transaction,
+                                      (char *)r->unparsed_uri,
+                                      (char *)r->method,
+                                      (char *)http_version))) {
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                          "coraza: engine error processing the request line");
+            ctx->intervention_triggered = 1;
+            return HTTP_INTERNAL_SERVER_ERROR;
+        }
 
         ret = coraza_process_intervention(ctx->transaction, r, 1);
         if (ret > 0) {
@@ -234,14 +247,24 @@ coraza_post_read_request(request_rec *r)
                 return HTTP_INTERNAL_SERVER_ERROR;
             }
 
-            coraza_add_request_header(ctx->transaction,
-                                      (char *)telts[i].key,
-                                      (int)name_len,
-                                      (char *)telts[i].val,
-                                      (int)val_len);
+            if (CORAZA_CALL_FAILED(coraza_add_request_header(ctx->transaction,
+                                       (char *)telts[i].key,
+                                       (int)name_len,
+                                       (char *)telts[i].val,
+                                       (int)val_len))) {
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                              "coraza: engine error adding request header");
+                ctx->intervention_triggered = 1;
+                return HTTP_INTERNAL_SERVER_ERROR;
+            }
         }
 
-        coraza_process_request_headers(ctx->transaction);
+        if (coraza_process_failed(coraza_process_request_headers(ctx->transaction))) {
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                          "coraza: engine error processing request headers");
+            ctx->intervention_triggered = 1;
+            return HTTP_INTERNAL_SERVER_ERROR;
+        }
 
         ret = coraza_process_intervention(ctx->transaction, r, 1);
         if (ret > 0) {

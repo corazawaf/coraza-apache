@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **218 tests** against a Docker
+The integration test suite (`test.sh`) runs **232 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (218 tests, event MPM)
+# Full suite (232 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (140 tests, no audit/debug log checks, no MPM verification)
+# Minimal (154 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -61,14 +61,14 @@ Clean requests return 405 (WAF passes, Apache rejects method).
 | `.htaccess` | 4 | Custom rule block/pass, `Coraza Off` bypass |
 | CRS inheritance | 3 | Server-level CRS rules apply in Directory/.htaccess |
 
-### Per-Phase Processing (8 tests)
+### Per-Phase Processing (12 tests)
 
 | Phase | Hook | Tests |
 |-------|------|-------|
 | Phase 1 | fixups | 2 (ARGS match: deny + pass) |
 | Phase 2 | fixups | 2 (REQUEST_BODY match: deny + pass) |
-| Phase 3 | output filter | 2 (RESPONSE_HEADERS:Content-Type match: deny + pass) |
-| Phase 4 | output filter | 2 (RESPONSE_BODY match: deny + pass) |
+| Phase 3 | output filter | 4 (RESPONSE_HEADERS:Content-Type match: deny + pass; the deny reaches the ErrorDocument, no recursive-error page) |
+| Phase 4 | output filter | 4 (RESPONSE_BODY match: deny + pass; same ErrorDocument checks) |
 
 ### Config Merging (6 tests)
 
@@ -112,6 +112,17 @@ sites release the Go-allocated error string through it (each check scoped to its
 function, `coraza_build_waf` and `coraza_child_init`), and no libc `free()`
 touches those strings (allocator mismatch, per the libcoraza docs). These run
 without `--container`, so they count in the minimal run too.
+
+### Source contract: every engine result is checked (10 tests)
+
+Issue #42. Greps over `src/` proving that every `coraza_process_*` call goes
+through `coraza_process_failed()` and every `coraza_add_*` / `coraza_append_*`
+call through `CORAZA_CALL_FAILED()`: six positive checks scoped to
+`coraza_post_read_request` and `coraza_output_filter`, three negative checks
+that no engine call opens a line bare in the phase-1, input-filter and
+output-filter sources, and one that a failing `apr_bucket_read()` no longer
+returns its status bare (it takes `coraza_fail_closed_response()`, so a
+delayed response still gets a clean 500). No `--container` needed.
 
 ### Request Protocol (5 tests)
 
@@ -265,7 +276,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 218-test suite passes after all restarts.
+restarts (1s apart). Full 232-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered
