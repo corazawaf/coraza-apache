@@ -799,7 +799,22 @@ echo "--- SSE streaming (header-delay skip) ---"
 check_stream "SSE: stream reaches client (not delayed)"   "$URL/sse-stream"          "data: tick" present
 check_stream "SSE near-miss: text/event-streamx delayed"  "$URL/sse-nearmiss"        "data: tick" absent
 check_curl   "SSE: phase-1 rule still blocks (no bypass)" "$URL/sse-stream?attack=1" 403 --max-time 5
+# The SSE exemption must not skip phase 4 either: the body is uninspected, so
+# phase 4 is finalised before the headers go out and a rule on ARGS still denies.
+check_curl   "SSE: phase-4 ARGS rule still blocks (no bypass)" "$URL/sse-stream?attack4=1" 403 --max-time 5
 check_no_crash "SSE streaming (header-delay skip)"
+echo ""
+
+echo "--- Header delay only when the body is inspected (issue #60) ---"
+# A chunked JSON stream whose body will not be inspected must reach the client
+# immediately; one that will be inspected is legitimately held until EOS. A
+# phase-4 rule on a non-body variable must still produce a clean 403 with body
+# access off: phase 4 is finalised before the headers go out, not skipped.
+check_stream "Body access off: stream reaches client (not delayed)"    "$URL/stream-json-off"   '"events"' present
+check_stream "MIME mismatch: stream reaches client (not delayed)"      "$URL/stream-json-mime"  '"events"' present
+check_stream "Body inspected: stream still delayed until EOS"          "$URL/stream-json-on"    '"events"' absent
+check_curl   "MIME mismatch: phase-4 ARGS rule still denies cleanly"    "$URL/stream-json-mime?attack=1" 403 --max-time 5
+check_no_crash "Header delay only when the body is inspected (issue #60)"
 echo ""
 
 echo "--- Delayed response cap (bound worker memory) ---"

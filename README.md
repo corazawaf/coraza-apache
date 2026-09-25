@@ -21,7 +21,7 @@ This pulls in libcoraza automatically. Built for Ubuntu 22.04 (jammy), 24.04 (no
 
 ## Build
 
-Requires libcoraza >= 1.7 for both the headers at compile time and the shared
+Requires libcoraza >= 1.8 for both the headers at compile time and the shared
 library at runtime -- the module gates on `coraza_version_num()` at startup and
 refuses to load against an older runtime library.
 The module is not linked against libcoraza -- it loads it via dlopen()
@@ -147,6 +147,10 @@ The module hooks into Apache's request processing:
 - **Phase 1** (fixups hook): connection info, URI, request headers
 - **Phase 2** (fixups hook): request body -- read proactively via ap_get_client_block()
 - **Phase 3-4** (output filter): response headers and body, with header delay
+  while the body is inspected. When it will not be (`SecResponseBodyAccess Off`,
+  or a Content-Type outside `SecResponseBodyMimeType`) phase 4 is finalised
+  before the headers are sent and the response streams; a deny there still
+  gets a clean error page.
 - **Phase 5** (log_transaction hook): audit logging
 
 An internal redirect (`ErrorDocument`, `FallbackResource`, `DirectoryIndex`,

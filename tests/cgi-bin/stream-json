@@ -1,0 +1,21 @@
+#!/bin/sh
+# Streaming JSON endpoint for the header-delay tests (issue #60).
+#
+# Sends headers plus a first chunk immediately, holds the response open for
+# longer than the test's curl --max-time, then finishes. A response whose body
+# is not going to be inspected must reach the client at once; one that will be
+# inspected is legitimately held until EOS. Each line is written by a separate
+# /usr/bin/printf so it is flushed to Apache immediately.
+#
+# The client is expected to be gone by the time the tail is written (the tests
+# use curl --max-time 4), so that write hits a closed pipe. Ignore SIGPIPE so
+# it fails with EPIPE instead of killing the process, and keep the final
+# command from being tail-exec'd by dash: otherwise the script itself dies of
+# the signal and httpd (PID 1 in the container, reaping the orphan) logs an
+# AH00052 "exit signal Broken pipe" that the crash sweep would flag.
+trap '' PIPE
+/usr/bin/printf 'Content-Type: %s\r\n\r\n' "${STREAM_CT:-application/json}"
+/usr/bin/printf '{"events":[{"n":1}'
+sleep 8
+/usr/bin/printf ']}\n' 2>/dev/null || :
+exit 0

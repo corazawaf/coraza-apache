@@ -164,8 +164,17 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
         coraza_process_response_headers(ctx->transaction, status,
                                         (char *)http_response_ver);
 
+        /*
+         * "Will the engine inspect this body?" needs both predicates:
+         * coraza_is_response_body_processable() only checks the Content-Type
+         * against SecResponseBodyMimeType, the access flag is consulted
+         * separately when the body is read -- so under SecResponseBodyAccess
+         * Off it still says 1 for a listed type. coraza_is_response_body_
+         * accessible() is the missing half (libcoraza >= 1.8, the floor).
+         */
         ctx->response_body_processable =
-            coraza_is_response_body_processable(ctx->transaction);
+            coraza_is_response_body_accessible(ctx->transaction)
+            && coraza_is_response_body_processable(ctx->transaction);
 
         ret = coraza_process_intervention(ctx->transaction, r, 0);
         if (ret > 0) {
@@ -179,18 +188,62 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
         }
 
         /*
-         * SSE / streaming responses: phases 1-3 are done. The body loop below
+         * Body not inspected (SecResponseBodyAccess Off, or a Content-Type
+         * outside SecResponseBodyMimeType): nothing the body loop below could
+         * feed the engine can change the phase-4 outcome, and every non-body
+         * variable phase 4 can read (RESPONSE_STATUS, RESPONSE_HEADERS, ARGS,
+         * TX -- CRS 959100 blocks here on the outbound score a 5xx raised in
+         * phase 3) is known now. So finalize phase 4 right here, before any
+         * header goes out: a deny still gets a clean error page, and a clean
+         * result means there is no reason to hold the headers back -- the
+         * response streams. Holding them anyway stalled every non-SSE stream
+         * (chunked JSON, NDJSON) until EOS or the delayed-body cap (issue #60).
+         * The EOS path is never reached for this response, so phase 4 is not
+         * run twice.
+         *
+         * This runs before the SSE shortcut below on purpose: text/event-stream
+         * is normally outside SecResponseBodyMimeType, so an SSE response takes
+         * this path and phase 4 still runs for it -- a phase-4 rule on ARGS or
+         * TX denies the stream cleanly instead of being bypassed.
+         */
+        if (!ctx->response_body_processable) {
+            if (coraza_process_failed(
+                    coraza_process_response_body(ctx->transaction))) {
+                return coraza_fail_closed_response(f, r, ctx, bb);
+            }
+            ctx->phase4_done = 1;
+
+            ret = coraza_process_intervention(ctx->transaction, r, 0);
+            if (ret > 0) {
+                /* Phase 4 deny with nothing sent yet: clean error page. */
+                ctx->intervention_triggered = 1;
+                ap_remove_output_filter(f);
+                apr_brigade_cleanup(bb);
+                r->status = ret;
+                ap_die(ret, r);
+                return AP_FILTER_ERROR;
+            }
+
+            ap_remove_output_filter(f);
+            return ap_pass_brigade(f->next, bb);
+        }
+
+        /*
+         * SSE whose body IS inspected (text/event-stream listed in
+         * SecResponseBodyMimeType): phases 1-3 are done. The body loop below
          * block-reads every bucket before forwarding the brigade, which drains
          * a streaming response pipe and holds it until EOS -- an SSE stream
          * never sends EOS, so the client would receive nothing. Step out of the
          * filter chain and let the response stream. Phase 4 cannot run on a body
          * that never ends anyway; this is the same trade-off 101 Switching
-         * Protocols accepts (see coraza_is_sse_response).
+         * Protocols accepts (see coraza_is_sse_response). The uninspected SSE
+         * case is handled above, with phase 4 finalized first.
          */
         if (coraza_is_sse_response(r)) {
             ap_remove_output_filter(f);
             return ap_pass_brigade(f->next, bb);
         }
+
 
         /* Begin header delay — skip for HEAD (no body), subrequests (internal),
          * and error responses (already have final status, e.g. ErrorDocument) */

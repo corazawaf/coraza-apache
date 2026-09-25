@@ -46,6 +46,7 @@ typedef int                  (*fn_coraza_update_status_code)(coraza_transaction_
 typedef int                  (*fn_coraza_add_get_args)(coraza_transaction_t, char *, char *);
 typedef int                  (*fn_coraza_is_response_body_processable)(coraza_transaction_t);
 typedef int                  (*fn_coraza_version_num)(void);
+typedef int                  (*fn_coraza_is_response_body_accessible)(coraza_transaction_t);
 typedef void                 (*fn_coraza_free_string)(char *);
 
 /* ------------------------------------------------------------------ */
@@ -81,6 +82,8 @@ static fn_coraza_process_logging         dl_process_logging;
 static fn_coraza_update_status_code      dl_update_status_code;
 static fn_coraza_add_get_args            dl_add_get_args;
 static fn_coraza_is_response_body_processable dl_is_response_body_processable;
+/* Exported by libcoraza >= 1.8 (corazawaf/libcoraza#128), the module's floor. */
+static fn_coraza_is_response_body_accessible dl_is_response_body_accessible;
 
 static dynlib_t dl_handle;
 
@@ -162,20 +165,29 @@ coraza_dl_open(server_rec *s)
      * authoritative test for a module that resolves everything at runtime. From
      * 1.5 the coraza_process_* calls use the tri-state coraza_result_t contract
      * that coraza_process_failed() assumes (< 0 == error, 1 == interruption).
-     * A library that does not export coraza_version_num(), or reports < 1.7.0,
+     * A library that does not export coraza_version_num(), or reports < 1.8.0
+     * (1.8 added coraza_is_response_body_accessible, which the response-body
+     * decision needs),
      * is unsupported: fail coraza_dl_open() so the worker refuses to start
      * (fail closed) rather than mis-read an interruption as an engine error.
      */
     *(void **)(&version_num) = dynlib_sym(dl_handle, "coraza_version_num");
     version = version_num != NULL ? version_num() : 0;
-    if (version < 10700) {
+    if (version < 10800) {
         ap_log_error(APLOG_MARK, APLOG_EMERG, 0, s,
-                     "coraza: libcoraza >= 1.7.0 required, but the loaded "
+                     "coraza: libcoraza >= 1.8.0 required, but the loaded "
                      "library does not report a compatible version");
         return HTTP_INTERNAL_SERVER_ERROR;
     }
     apr_snprintf(version_str, sizeof(version_str), "%d.%d.%d",
                  version / 10000, version / 100 % 100, version % 100);
+
+    /* 1.8 export; resolved after the version gate so an older library gets the
+
+     * ">= 1.8.0 required" message rather than a bare missing-symbol error. */
+
+    DL_SYM(dl_is_response_body_accessible, coraza_is_response_body_accessible);
+
 
     ap_log_error(APLOG_MARK, APLOG_NOTICE, 0, s,
                  "coraza: %s loaded via dynlib_open (libcoraza %s)",
@@ -367,4 +379,10 @@ int coraza_add_get_args(coraza_transaction_t t, char *name,
 int coraza_is_response_body_processable(coraza_transaction_t t)
 {
     return dl_is_response_body_processable(t);
+}
+
+/* Returns 1 when SecResponseBodyAccess is on for the transaction. */
+int coraza_is_response_body_accessible(coraza_transaction_t t)
+{
+    return dl_is_response_body_accessible(t);
 }
