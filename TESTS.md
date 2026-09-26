@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **258 tests** against a Docker
+The integration test suite (`test.sh`) runs **268 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (258 tests, event MPM)
+# Full suite (268 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (178 tests, no audit/debug log checks, no MPM verification)
+# Minimal (181 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+79 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+86 tests) |
 
 ## Test Categories
 
@@ -61,7 +61,7 @@ Clean requests return 405 (WAF passes, Apache rejects method).
 | `.htaccess` | 8 | Custom rule block/pass, `Coraza Off` bypass; two policies whose rule text collides under the WAF cache's DJB2 hash with the same rule count (`ARGS:xb` / `ARGS:yA`) each run their own rules; the four requests share one keep-alive connection so a single child's cache serves them all (issue #43) |
 | CRS inheritance | 3 | Server-level CRS rules apply in Directory/.htaccess |
 
-### Per-Phase Processing (12 tests)
+### Per-Phase Processing (15 tests)
 
 | Phase | Hook | Tests |
 |-------|------|-------|
@@ -69,6 +69,7 @@ Clean requests return 405 (WAF passes, Apache rejects method).
 | Phase 2 | fixups | 2 (REQUEST_BODY match: deny + pass) |
 | Phase 3 | output filter | 4 (RESPONSE_HEADERS:Content-Type match: deny + pass; the deny reaches the ErrorDocument, no recursive-error page) |
 | Phase 4 | output filter | 4 (RESPONSE_BODY match: deny + pass; same ErrorDocument checks) |
+| `ARGS_POST` | fixups (phase 2) | 3 (`cmd=boom` in the body denied, `cmd=safe` passes, `?cmd=boom` in the query passes: the selector is `ARGS_POST`, not `ARGS`; issue #49) |
 
 ### Config Merging (6 tests)
 
@@ -237,7 +238,7 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
-### Crash and worker-health sweep (43 tests: 42 sweeps + 1 self-test, requires `--container`)
+### Crash and worker-health sweep (44 tests: 43 sweeps + 1 self-test, requires `--container`)
 
 Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
 that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
@@ -247,6 +248,18 @@ runs after every section, reports only lines new since the previous sweep (so
 the failing section is named), and probes `/server-info` to catch a wedged
 server. A self-test injects a fake worker-exit line into httpd's stderr and
 requires the sweep to detect it, so the oracle is proven live, not assumed.
+
+### DetectionOnly proven via the audit log (6 tests, requires `--container`)
+
+Issue #49. `/detection-only` carries the `/phase1` deny rule under
+`SecRuleEngine DetectionOnly` with its own audit log: the matching request
+gets a 200 and the audit log holds the rule id and `msg`, which is what
+separates "matched, declined to block" from "never ran"; a non-matching
+request first shows the rule id is absent until a match. Mutation control: the
+`On` twin returns 403. A `noauditlog` twin was tried and dropped: coraza still
+writes the DetectionOnly transaction under `RelevantOnly` + `noauditlog` (empty
+H section), which is engine behaviour, not the connector's. Followed by a crash
+sweep.
 
 ### auditlog action with RelevantOnly (3 tests, requires `--container`)
 
@@ -320,7 +333,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 258-test suite passes after all restarts.
+restarts (1s apart). Full 268-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered

@@ -767,6 +767,11 @@ check "Phase 1: deny on ARGS"         "$URL/phase1?action=block403"             
 check "Phase 1: pass clean"           "$URL/phase1?action=safe"                   200
 check_post "Phase 2: deny on body"    "$URL/phase2" "PHASE2ATTACK"                403
 check_post "Phase 2: pass clean"      "$URL/phase2" "cleandata"                   200
+# ARGS_POST selects body arguments only (issue #49): the same name in the
+# query string must not match, which separates ARGS_POST from ARGS.
+check_post "ARGS_POST: cmd=boom in the body is denied"          "$URL/args-post" "cmd=boom"     403
+check_post "ARGS_POST: cmd=safe in the body passes"             "$URL/args-post" "cmd=safe"     200
+check      "ARGS_POST: cmd=boom in the query string passes"     "$URL/args-post?cmd=boom"       200
 check_no_crash "Per-phase tests (1+2)"
 echo ""
 
@@ -1229,6 +1234,23 @@ SecRemoteRulesFailAction Abort' 0 'Syntax OK'
     check_perloc_audit_log_absent "RelevantOnly: trigger=no NOT logged"    "/var/log/coraza/audit/relevant.log" "trigger=no"
     check_perloc_audit_log_absent "noauditlog: trigger=yes NOT logged"     "/var/log/coraza/audit/relevant-nolog.log" "trigger=yes"
     check_no_crash "auditlog action with RelevantOnly tests"
+    echo ""
+
+    echo "--- DetectionOnly proven via the audit log (issue #49) ---"
+    # A 200 alone cannot tell "matched, correctly declined to block" from
+    # "never ran": the audit line does, and a non-matching request first
+    # proves the rule id only appears on a match. The On twin proves the rule
+    # enforces. (No noauditlog twin: coraza still writes the DetectionOnly
+    # transaction under RelevantOnly + noauditlog, with an empty H section;
+    # that is engine behaviour, not the connector's.)
+    clear_perloc_audit_logs
+    check "DetectionOnly: non-matching request passes"        "$URL/detection-only?action=safe"             200
+    check_perloc_audit_log_absent "DetectionOnly: no rule id logged without a match" "/var/log/coraza/audit/detection.log" '32001'
+    check "DetectionOnly: matching request is not blocked"    "$URL/detection-only?action=block403"         200
+    check_perloc_audit_log        "DetectionOnly: match logged with its rule id"  "/var/log/coraza/audit/detection.log"         '32001'
+    check_perloc_audit_log        "DetectionOnly: match logged with its msg"      "/var/log/coraza/audit/detection.log"         'detection-only-match'
+    check "DetectionOnly: the On twin blocks"                 "$URL/detection-only-on?action=block403"      403
+    check_no_crash "DetectionOnly via the audit log (issue #49)"
     echo ""
 
     echo "--- Crash sweep self-test ---"
