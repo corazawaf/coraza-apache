@@ -731,6 +731,16 @@ check "htaccess: normal allowed"      "$URL/htaccess-protected/"                
 check "htaccess: custom rule blocks"  "$URL/htaccess-protected/?block=yes"        403
 check "htaccess: Coraza Off normal"   "$URL/htaccess-disabled/"                   200
 check "htaccess: Coraza Off SQLi"     "$URL/htaccess-disabled/?id=1%20OR%201=1"   200
+# Two .htaccess policies whose rule text collides under the cache's DJB2 hash
+# with the same rule count ("ARGS:xb" vs "ARGS:yA"). Each directory must run
+# its own rules, whichever WAF was built first (issue #43). The cache is per
+# child process, so A is requested enough times first to get its WAF built
+# and cached in every child before B is looked up.
+i=0; while [ $i -lt 24 ]; do curl -s -o /dev/null "$URL/htaccess-collide-a/?xb=1"; i=$((i+1)); done
+check "htaccess collision: A denies its own arg"   "$URL/htaccess-collide-a/?xb=1"   403
+check "htaccess collision: A passes B's arg"       "$URL/htaccess-collide-a/?yA=1"   200
+check "htaccess collision: B denies its own arg"   "$URL/htaccess-collide-b/?yA=1"   403
+check "htaccess collision: B passes A's arg"       "$URL/htaccess-collide-b/?xb=1"   200
 check_no_crash ".htaccess tests"
 echo ""
 
