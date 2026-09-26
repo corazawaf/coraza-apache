@@ -804,7 +804,8 @@ check_source_in_func "phase 1: request headers result checked" mod_coraza_phase1
 check_source_in_func "phase 3: response header add checked" mod_coraza_filter_out.c coraza_output_filter 'CORAZA_CALL_FAILED\(coraza_add_response_header\('
 check_source_in_func "phase 3: response headers result checked" mod_coraza_filter_out.c coraza_output_filter 'coraza_process_failed\(coraza_process_response_headers\('
 check_source "no bare engine call in phase 1/2" mod_coraza_phase1.c '^[[:space:]]*coraza_(process_(connection|uri|request_headers|request_body)|add_request_header|append_request_body)\(' !
-check_source "no bare engine call in the input filter" mod_coraza_body_in.c '^[[:space:]]*coraza_(process_request_body|append_request_body)\(' !
+check_source "the input filter only replays, it never calls the engine" mod_coraza_body_in.c 'coraza_(process|append|add)_[a-z_]*\(' !
+check_source "no binding left for the unused coraza_request_body_from_file" mod_coraza_dl.c 'request_body_from_file' !
 check_source "no bare engine call in the output filter" mod_coraza_filter_out.c '^[[:space:]]*coraza_(process_response_(headers|body)|add_response_header|append_response_body)\(' !
 check_source "a failed bucket read does not return bare" mod_coraza_filter_out.c '^[[:space:]]*return rv;' !
 echo ""
