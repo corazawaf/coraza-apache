@@ -102,7 +102,19 @@ RUN mkdir -p /var/log/coraza && \
     mkdir -p /usr/local/apache2/htdocs/htaccess-disabled && \
     echo "OK" > /usr/local/apache2/htdocs/htaccess-disabled/index.html && \
     printf 'Coraza Off\n' \
-        > /usr/local/apache2/htdocs/htaccess-disabled/.htaccess
+        > /usr/local/apache2/htdocs/htaccess-disabled/.htaccess && \
+    # Two .htaccess policies whose rule text collides under the WAF cache's
+    # DJB2 hash (h = h*33 + c: "xb" and "yA" hash alike, same length, same
+    # rule count) but differ in behaviour. The cache must tell them apart
+    # (issue #43).
+    mkdir -p /usr/local/apache2/htdocs/htaccess-collide-a && \
+    echo "OK" > /usr/local/apache2/htdocs/htaccess-collide-a/index.html && \
+    printf 'SecRule ARGS:xb "@streq 1" "id:10003,phase:1,deny,status:403"\n' \
+        > /usr/local/apache2/htdocs/htaccess-collide-a/.htaccess && \
+    mkdir -p /usr/local/apache2/htdocs/htaccess-collide-b && \
+    echo "OK" > /usr/local/apache2/htdocs/htaccess-collide-b/index.html && \
+    printf 'SecRule ARGS:yA "@streq 1" "id:10003,phase:1,deny,status:403"\n' \
+        > /usr/local/apache2/htdocs/htaccess-collide-b/.htaccess
 
 # Copy WAF rules config
 COPY coraza-waf.conf /etc/coraza/coraza-waf.conf

@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **232 tests** against a Docker
+The integration test suite (`test.sh`) runs **236 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (232 tests, event MPM)
+# Full suite (236 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (154 tests, no audit/debug log checks, no MPM verification)
+# Minimal (158 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -53,12 +53,12 @@ Clean requests return 405 (WAF passes, Apache rejects method).
 | PUT | 8 | CRS attacks, phase 2 body rule, body limit reject/partial |
 | DELETE | 8 | Same coverage as PUT |
 
-### Directory and .htaccess (12 tests)
+### Directory and .htaccess (16 tests)
 
 | Context | Tests | Covers |
 |---------|-------|--------|
 | `<Directory>` | 5 | Custom rule block/pass, `Coraza Off` bypass |
-| `.htaccess` | 4 | Custom rule block/pass, `Coraza Off` bypass |
+| `.htaccess` | 8 | Custom rule block/pass, `Coraza Off` bypass; two policies whose rule text collides under the WAF cache's DJB2 hash with the same rule count (`ARGS:xb` / `ARGS:yA`) each run their own rules; the four requests share one keep-alive connection so a single child's cache serves them all (issue #43) |
 | CRS inheritance | 3 | Server-level CRS rules apply in Directory/.htaccess |
 
 ### Per-Phase Processing (12 tests)
@@ -265,7 +265,7 @@ The Docker image configures:
   audit/debug log isolation, rule isolation, error pages, transaction ID, status codes
 - **2 VirtualHost blocks**: `vhost-off.test` (Coraza Off), `vhost-custom.test` (custom rule, no CRS)
 - **2 Directory blocks**: custom rule + `Coraza Off`
-- **2 .htaccess files**: custom rule + `Coraza Off` (created during Docker build)
+- **4 .htaccess files**: custom rule, `Coraza Off`, two hash-colliding policies (created during Docker build)
 - **mod_info**: enabled for MPM detection (`/server-info` with `Coraza Off`)
 
 ## Stress Testing
@@ -276,7 +276,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 232-test suite passes after all restarts.
+restarts (1s apart). Full 236-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered

@@ -43,18 +43,30 @@ static apr_thread_mutex_t *g_waf_build_mutex = NULL;
  * Linear array — no slot collisions, bounded by unique rule sets (~30).
  * Hash is computed from rule string CONTENT, not pointer values,
  * so .htaccess (per-request pool) and Location merges produce stable hashes.
+ * A hit is confirmed by comparing the ordered rule entries themselves, never
+ * by hash and count alone: a collision between two different policies would
+ * otherwise make a location run someone else's rules (issue #43). The entry
+ * keeps its own copy of the rules in the child pool, since the array it was
+ * built from may belong to a request pool.
  * Protected by g_waf_build_mutex.
+ *
+ * Beyond WAF_CACHE_MAX distinct rule sets the cache stops adding (logged once
+ * at warning level); later distinct policies still work, each request-time
+ * merge just rebuilds its WAF instead of sharing one.
  */
 #define WAF_CACHE_MAX 64
 
 typedef struct {
-    unsigned long hash;
-    int           rules_nelts;
-    coraza_waf_t  waf;
+    unsigned long        hash;
+    int                  rules_nelts;
+    coraza_rule_entry_t *rules;        /* child-pool copy of the entries */
+    coraza_waf_t         waf;
 } waf_cache_entry_t;
 
 static waf_cache_entry_t g_waf_cache[WAF_CACHE_MAX];
 static int g_waf_cache_count = 0;
+static apr_pool_t *g_waf_cache_pool = NULL;   /* child pool, set in child_init */
+static int g_waf_cache_full_logged = 0;
 
 /* DJB2 hash over rule content (type + value strings). */
 static unsigned long
@@ -73,12 +85,32 @@ rules_hash(apr_array_header_t *rules)
     return h;
 }
 
+/* Same ordered (type, value) entries? */
+static int
+rules_equal(const coraza_rule_entry_t *a, int n, apr_array_header_t *rules)
+{
+    const coraza_rule_entry_t *b = (const coraza_rule_entry_t *)rules->elts;
+    int i;
+
+    if (n != rules->nelts) {
+        return 0;
+    }
+    for (i = 0; i < n; i++) {
+        if (a[i].type != b[i].type || strcmp(a[i].value, b[i].value) != 0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static coraza_waf_t
-waf_cache_find(unsigned long hash, int nelts)
+waf_cache_find(unsigned long hash, apr_array_header_t *rules)
 {
     int i;
     for (i = 0; i < g_waf_cache_count; i++) {
-        if (g_waf_cache[i].hash == hash && g_waf_cache[i].rules_nelts == nelts) {
+        if (g_waf_cache[i].hash == hash
+            && rules_equal(g_waf_cache[i].rules, g_waf_cache[i].rules_nelts,
+                           rules)) {
             return g_waf_cache[i].waf;
         }
     }
@@ -86,14 +118,39 @@ waf_cache_find(unsigned long hash, int nelts)
 }
 
 static void
-waf_cache_add(unsigned long hash, int nelts, coraza_waf_t waf)
+waf_cache_add(unsigned long hash, apr_array_header_t *rules, coraza_waf_t waf,
+              server_rec *s)
 {
-    if (g_waf_cache_count < WAF_CACHE_MAX) {
-        g_waf_cache[g_waf_cache_count].hash = hash;
-        g_waf_cache[g_waf_cache_count].rules_nelts = nelts;
-        g_waf_cache[g_waf_cache_count].waf = waf;
-        g_waf_cache_count++;
+    const coraza_rule_entry_t *src = (const coraza_rule_entry_t *)rules->elts;
+    coraza_rule_entry_t *copy;
+    int i;
+
+    if (g_waf_cache_count >= WAF_CACHE_MAX) {
+        if (!g_waf_cache_full_logged) {
+            g_waf_cache_full_logged = 1;
+            ap_log_error(APLOG_MARK, APLOG_WARNING, 0, s,
+                         "coraza: WAF cache full (%d distinct rule sets); "
+                         "further request-time merges rebuild their WAF "
+                         "instead of sharing one", WAF_CACHE_MAX);
+        }
+        return;
     }
+    if (g_waf_cache_pool == NULL) {
+        return;
+    }
+
+    copy = apr_palloc(g_waf_cache_pool,
+                      (apr_size_t)rules->nelts * sizeof(*copy));
+    for (i = 0; i < rules->nelts; i++) {
+        copy[i].type = src[i].type;
+        copy[i].value = apr_pstrdup(g_waf_cache_pool, src[i].value);
+    }
+
+    g_waf_cache[g_waf_cache_count].hash = hash;
+    g_waf_cache[g_waf_cache_count].rules_nelts = rules->nelts;
+    g_waf_cache[g_waf_cache_count].rules = copy;
+    g_waf_cache[g_waf_cache_count].waf = waf;
+    g_waf_cache_count++;
 }
 
 
@@ -239,7 +296,7 @@ coraza_create_ctx(request_rec *r)
         /* Strategy 2: WAF content-hash cache lookup */
         if (dcf->waf == 0) {
             unsigned long h = rules_hash(dcf->rules);
-            coraza_waf_t cached = waf_cache_find(h, dcf->rules->nelts);
+            coraza_waf_t cached = waf_cache_find(h, dcf->rules);
             if (cached != 0) {
                 dcf->waf = cached;
                 if (dcf->merge_child != NULL) {
@@ -253,7 +310,7 @@ coraza_create_ctx(request_rec *r)
             unsigned long h = rules_hash(dcf->rules);
             dcf->waf = coraza_build_waf(dcf->rules, r->server);
             if (dcf->waf != 0) {
-                waf_cache_add(h, dcf->rules->nelts, dcf->waf);
+                waf_cache_add(h, dcf->rules, dcf->waf, r->server);
             }
             if (dcf->merge_child != NULL) {
                 ((coraza_dir_conf_t *)dcf->merge_child)->waf = dcf->waf;
@@ -1004,6 +1061,7 @@ coraza_child_init(apr_pool_t *p, server_rec *s)
 
     /* Create mutex for lazy WAF building (event MPM thread safety) */
     apr_thread_mutex_create(&g_waf_build_mutex, APR_THREAD_MUTEX_DEFAULT, p);
+    g_waf_cache_pool = p;   /* cache entries copy their rules here */
 
     /* Step 2: build server WAFs for all server_recs */
     server_rec *sv;
