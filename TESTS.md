@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **241 tests** against a Docker
+The integration test suite (`test.sh`) runs **245 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (241 tests, event MPM)
+# Full suite (245 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (162 tests, no audit/debug log checks, no MPM verification)
+# Minimal (166 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -112,6 +112,16 @@ sites release the Go-allocated error string through it (each check scoped to its
 function, `coraza_build_waf` and `coraza_child_init`), and no libc `free()`
 touches those strings (allocator mismatch, per the libcoraza docs). These run
 without `--container`, so they count in the minimal run too.
+
+### Source contract: request body read in 64 KiB chunks (4 tests)
+
+Issue #45. The fixups read loop used an 8 KiB stack buffer: 128 engine
+submissions, intervention polls and replay/spool copies per MiB of body. It now
+reads `CORAZA_BODY_READ_CHUNK` (64 KiB, as coraza-nginx does) into a buffer
+from the request pool, allocated only for requests that carry a body. Checked
+by grep: the constant's value, its use in `ap_get_client_block()`, the pool
+allocation, and the absence of any stack `char buf[]` in the file. The 20 KB
+and 300 KB replay tests remain byte-exact. No `--container` needed.
 
 ### Source contract: every engine result is checked (10 tests)
 
@@ -252,9 +262,9 @@ what it received.
 | Test | Asserts |
 |------|---------|
 | POST JSON body is delivered | echoed body equals the payload |
-| POST 20 KB body is delivered intact | multi-bucket replay across 8 KiB reads, terminated by EOS |
+| POST 20 KB body is delivered intact | single 64 KiB read replayed byte-exact, terminated by EOS |
 | PUT static file with body: 405, not 400 | exhausted replay delegates instead of returning `APR_EOF` |
-| POST 300 KB multipart upload is delivered intact | body past `CorazaRequestBodyInMemoryLimit` is spooled to a temp file and replayed as a file bucket |
+| POST 300 KB multipart upload is delivered intact | several 64 KiB reads; body past `CorazaRequestBodyInMemoryLimit` is spooled to a temp file and replayed as a file bucket |
 
 ### SecRequestBodyAccess Off: body not submitted to the engine (4 tests)
 
@@ -287,7 +297,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 241-test suite passes after all restarts.
+restarts (1s apart). Full 245-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered

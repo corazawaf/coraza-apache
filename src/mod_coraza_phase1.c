@@ -290,7 +290,7 @@ coraza_post_read_request(request_rec *r)
      * the body it was sent. */
     {
         int rc;
-        char buf[8192];
+        char *buf;
         long nread;
 
         /* Prepare to read the request body with automatic chunked decoding */
@@ -318,11 +318,14 @@ coraza_post_read_request(request_rec *r)
             int inspect_body =
                 coraza_is_request_body_accessible(ctx->transaction);
 
+            /* Only requests that carry a body pay for the read buffer. */
+            buf = apr_palloc(r->pool, CORAZA_BODY_READ_CHUNK);
+
             ctx->saved_body = apr_brigade_create(r->pool,
                                                  r->connection->bucket_alloc);
 
             /* ap_get_client_block: reads up to N bytes, returns count or -1 */
-            while ((nread = ap_get_client_block(r, buf, sizeof(buf))) > 0) {
+            while ((nread = ap_get_client_block(r, buf, CORAZA_BODY_READ_CHUNK)) > 0) {
                 /* Keep a copy before inspecting: an intervention returns from
                  * inside this loop, and on that path the request never reaches
                  * a handler anyway. The copy lives in memory up to
