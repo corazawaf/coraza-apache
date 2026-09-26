@@ -786,7 +786,7 @@ echo "--- Source contract: request body read in 64 KiB chunks off the stack (iss
 # of the module's cost model: 64 KiB like coraza-nginx, from the request pool.
 # The 20 KB and 300 KB replay tests below stay byte-exact across the change.
 check_source "read chunk is 64 KiB" mod_coraza.h 'define CORAZA_BODY_READ_CHUNK \(64 \* 1024\)'
-check_source_in_func "fixups reads with the chunk constant" mod_coraza_phase1.c coraza_post_read_request 'ap_get_client_block\(r, buf,'
+check_source_in_func "fixups reads with the chunk constant" mod_coraza_phase1.c coraza_post_read_request 'ap_get_client_block\(r, buf, CORAZA_BODY_READ_CHUNK\)'
 check_source_in_func "read buffer comes from the request pool" mod_coraza_phase1.c coraza_post_read_request 'apr_palloc\(r->pool, CORAZA_BODY_READ_CHUNK\)'
 check_source "no stack read buffer left in fixups" mod_coraza_phase1.c '^[[:space:]]*char buf\[' !
 echo ""
@@ -999,9 +999,10 @@ echo ""
 echo "--- Request body reaches the handler (issue #34) ---"
 check_post_body "POST JSON body is delivered to the handler" \
     "$URL/echo" "application/json" '{"body": "hello"}' 200 'BODY=\[{"body": "hello"}\]'
-# A 20 KB body spans several 8 KiB fixups reads: the replay must hand over
-# every bucket, in order, and then the EOS. Sent as a form post because CRS's
-# default allowed_request_content_type list does not include text/plain.
+# A 20 KB body fits one 64 KiB fixups read: the replay must hand over the
+# bucket byte-exact and then the EOS (the 300 KB upload below covers the
+# multi-read case). Sent as a form post because CRS's default
+# allowed_request_content_type list does not include text/plain.
 big="data=$(head -c 20000 /dev/zero | tr '\0' 'A')"
 check_post_body "POST 20 KB body is delivered intact" \
     "$URL/echo" "application/x-www-form-urlencoded" "$big" 200 'BODY=\[data=A\{20000\}\]'
@@ -1010,7 +1011,8 @@ check_post_body "POST 20 KB body is delivered intact" \
 # replace the 405 default_handler gives a PUT to a static file.
 check_method "PUT static file with body: 405, not 400" \
     PUT "$URL/dir-protected/index.html" 'x=1' 405
-# A 300 KB upload crosses CorazaRequestBodyInMemoryLimit (64 KiB on /echo in
+# A 300 KB upload spans several 64 KiB fixups reads and crosses
+# CorazaRequestBodyInMemoryLimit (64 KiB on /echo in
 # the test config, 128 KiB by default): the head is replayed from memory and
 # the tail from the spool file. Markers at both ends prove ordering; the exact
 # size check in check_upload_body proves every byte reached the handler.

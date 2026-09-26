@@ -262,9 +262,9 @@ what it received.
 | Test | Asserts |
 |------|---------|
 | POST JSON body is delivered | echoed body equals the payload |
-| POST 20 KB body is delivered intact | multi-bucket replay across 8 KiB reads, terminated by EOS |
+| POST 20 KB body is delivered intact | single 64 KiB read replayed byte-exact, terminated by EOS |
 | PUT static file with body: 405, not 400 | exhausted replay delegates instead of returning `APR_EOF` |
-| POST 300 KB multipart upload is delivered intact | body past `CorazaRequestBodyInMemoryLimit` is spooled to a temp file and replayed as a file bucket |
+| POST 300 KB multipart upload is delivered intact | several 64 KiB reads; body past `CorazaRequestBodyInMemoryLimit` is spooled to a temp file and replayed as a file bucket |
 
 ### SecRequestBodyAccess Off: body not submitted to the engine (4 tests)
 
