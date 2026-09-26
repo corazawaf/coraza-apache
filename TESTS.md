@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **245 tests** against a Docker
+The integration test suite (`test.sh`) runs **257 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (245 tests, event MPM)
+# Full suite (257 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (166 tests, no audit/debug log checks, no MPM verification)
+# Minimal (177 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+78 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+79 tests) |
 
 ## Test Categories
 
@@ -123,6 +123,26 @@ by grep: the constant's value, its use in `ap_get_client_block()`, the pool
 allocation, and the absence of any stack `char buf[]` in the file. The 20 KB
 and 300 KB replay tests remain byte-exact. No `--container` needed.
 
+### Bulk header submission (11 tests)
+
+Issue #46. Request and response headers used to cross the C/Go boundary one
+call per header. They are now packed by `coraza_pack_headers()` (u16 name
+length, name, u32 value length, value, the format shared with coraza-nginx)
+and handed to `coraza_add_request_headers()` / `coraza_add_response_headers()`
+in one call per phase; a pack failure (a length the wire format cannot carry)
+or a batch the engine rejects falls back to the per-header loop, which keeps
+its fail-closed length guard. Request side: the trigger behind 60 padding
+headers is still seen, the padding alone passes, an empty-valued header keeps
+the framing intact. Response side, on the `resp-headers.test` vhost: a phase-3 rule fires on a
+header set with `Header set` (headers_out) and on one set with `Header always
+set` (err_headers_out), a path without a rule passes; the `/phase3`
+Content-Type rule covers the third source. The markers are set `early` at
+vhost level because the normal mod_headers filter runs after `CORAZA_OUT`
+(a filter-order limitation, see the Dockerfile) and early mode precedes
+`<Location>` merging.
+Five source-contract checks pin the required symbols, both bulk call sites and
+the packer's u16 guard. Followed by a crash sweep.
+
 ### Source contract: every engine result is checked (10 tests)
 
 Issue #42. Greps over `src/` proving that every `coraza_process_*` call goes
@@ -214,7 +234,7 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
-### Crash and worker-health sweep (42 tests: 41 sweeps + 1 self-test, requires `--container`)
+### Crash and worker-health sweep (43 tests: 42 sweeps + 1 self-test, requires `--container`)
 
 Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
 that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
@@ -297,7 +317,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 245-test suite passes after all restarts.
+restarts (1s apart). Full 257-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered

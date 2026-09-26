@@ -831,7 +831,35 @@ big_hdr="$(printf 'A%.0s' $(seq 1 6000))BOOMHEADER"
 pad_hdr="$(printf 'A%.0s' $(seq 1 6000))"
 check_curl "Large header: trigger at end is inspected" "$URL/header-check" 403 -H "X-Test: $big_hdr"
 check_curl "Large header: padding only is not clipped" "$URL/header-check" 200 -H "X-Test: $pad_hdr"
+# Request headers now reach the engine as one packed set (issue #46): the
+# trigger behind 60 padding headers must still be seen, the same set without
+# it must pass, and a header with an empty value must not break the framing.
+pad_hdrs=""
+i=0; while [ $i -lt 60 ]; do pad_hdrs="$pad_hdrs -H X-Pad-$i:v$i"; i=$((i+1)); done
+check_curl "Bulk headers: trigger behind 60 padding headers is inspected" "$URL/header-check" 403 $pad_hdrs -H "X-Test: BOOMHEADER"
+check_curl "Bulk headers: 60 padding headers alone pass" "$URL/header-check" 200 $pad_hdrs
+check_curl "Bulk headers: empty-valued header keeps the framing intact" "$URL/header-check" 403 -H "X-Empty;" -H "X-Test: BOOMHEADER"
 check_no_crash "Large header inspection (length-narrowing guard)"
+echo ""
+
+echo "--- Bulk response-header submission (issue #46) ---"
+# headers_out ("Header set") and err_headers_out ("Header always set") are
+# packed into the same set as the Content-Type; a phase-3 rule on each must
+# fire. The /phase3 Content-Type rule above is the third source's control.
+# The resp-headers.test vhost sets both markers "early" (see the Dockerfile
+# for why), on every response; only /out and /err carry a rule on them.
+check_vhost "Bulk response headers: headers_out reaches the engine"     "resp-headers.test" "$URL/out" 403
+check_vhost "Bulk response headers: err_headers_out reaches the engine" "resp-headers.test" "$URL/err" 403
+check_vhost "Bulk response headers: markers without a rule pass"        "resp-headers.test" "$URL/"    200
+check_no_crash "Bulk response-header submission (issue #46)"
+echo ""
+
+echo "--- Source contract: headers are submitted in bulk (issue #46) ---"
+check_source "bulk request-header symbol is bound as required" mod_coraza_dl.c 'DL_SYM\(dl_add_request_headers, *coraza_add_request_headers\)'
+check_source "bulk response-header symbol is bound as required" mod_coraza_dl.c 'DL_SYM\(dl_add_response_headers, *coraza_add_response_headers\)'
+check_source_in_func "phase 1 submits request headers in bulk" mod_coraza_phase1.c coraza_post_read_request 'coraza_add_request_headers\('
+check_source_in_func "phase 3 submits response headers in bulk" mod_coraza_filter_out.c coraza_output_filter 'coraza_add_response_headers\('
+check_source_in_func "the packer refuses names over the u16 field" mod_coraza.c coraza_pack_headers 'nlen > 0xffff'
 echo ""
 
 echo "--- Response phase tests (3+4) ---"

@@ -221,26 +221,58 @@ coraza_post_read_request(request_rec *r)
     {
         const apr_array_header_t *tarr;
         const apr_table_entry_t *telts;
-        int i;
+        coraza_header_pair_t *pairs;
+        int i, count = 0, bulk_done = 0;
 
         tarr = apr_table_elts(r->headers_in);
         telts = (const apr_table_entry_t *)tarr->elts;
+        pairs = apr_palloc(r->pool,
+                           (apr_size_t)(tarr->nelts > 0 ? tarr->nelts : 1)
+                           * sizeof(*pairs));
 
         for (i = 0; i < tarr->nelts; i++) {
-            size_t name_len, val_len;
-
             if (telts[i].key == NULL) {
                 continue;
             }
+            pairs[count].name = telts[i].key;
+            pairs[count].name_len = strlen(telts[i].key);
+            pairs[count].value = telts[i].val ? telts[i].val : "";
+            pairs[count].value_len = telts[i].val ? strlen(telts[i].val) : 0;
+            count++;
+        }
 
+        /*
+         * Fast path: hand the engine the whole header set in one cgo crossing
+         * (issue #46). A pack failure (a length that does not fit the wire
+         * format) or a batch the engine rejects falls back to the per-header
+         * loop below, which has its own fail-closed length guard, so a bulk
+         * failure degrades to the old coverage, never to fewer headers.
+         */
+        if (count == 0) {
+            bulk_done = 1;
+        } else {
+            int packed_len;
+            char *packed = coraza_pack_headers(r->pool, pairs, count,
+                                               &packed_len);
+            if (packed != NULL) {
+                if (!CORAZA_CALL_FAILED(coraza_add_request_headers(
+                        ctx->transaction, packed, packed_len, count))) {
+                    bulk_done = 1;
+                } else {
+                    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                                  "coraza: bulk request-header submission "
+                                  "failed, falling back to per-header path");
+                }
+            }
+        }
+
+        for (i = 0; !bulk_done && i < count; i++) {
             /*
              * coraza_add_request_header takes int lengths; guard the size_t ->
              * int narrowing so an oversized header cannot wrap to a bogus
              * length and slip past inspection. Fail closed.
              */
-            name_len = strlen(telts[i].key);
-            val_len  = telts[i].val ? strlen(telts[i].val) : 0;
-            if (name_len > INT_MAX || val_len > INT_MAX) {
+            if (pairs[i].name_len > INT_MAX || pairs[i].value_len > INT_MAX) {
                 ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
                               "coraza: request header too long to inspect");
                 ctx->intervention_triggered = 1;
@@ -248,10 +280,10 @@ coraza_post_read_request(request_rec *r)
             }
 
             if (CORAZA_CALL_FAILED(coraza_add_request_header(ctx->transaction,
-                                       (char *)telts[i].key,
-                                       (int)name_len,
-                                       (char *)telts[i].val,
-                                       (int)val_len))) {
+                                       (char *)pairs[i].name,
+                                       (int)pairs[i].name_len,
+                                       (char *)pairs[i].value,
+                                       (int)pairs[i].value_len))) {
                 ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
                               "coraza: engine error adding request header");
                 ctx->intervention_triggered = 1;
