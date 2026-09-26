@@ -424,6 +424,11 @@ RUN { \
     echo '    CorazaTransactionId "TESTID-APACHE-001"'; \
     echo '    SecRule ARGS:action "@streq block" "id:20301,phase:1,deny,status:403,log"'; \
     echo '</Location>'; \
+    echo '# --- VirtualHost isolation ---'; \
+    echo '# Default VHost for localhost — inherits server-level config'; \
+    echo '<VirtualHost *:80>'; \
+    echo '    ServerName localhost'; \
+    echo '</VirtualHost>'; \
     echo '# --- Bulk response-header submission (issue #46): headers_out and'; \
     echo '# err_headers_out both reach the engine in the packed set. "Header set"'; \
     echo '# lands in headers_out, "Header always set" in err_headers_out. They are'; \
@@ -446,11 +451,6 @@ RUN { \
     echo '    <Location "/err">'; \
     echo '        SecRule RESPONSE_HEADERS:X-Err "@contains BOOMERR" "id:20831,phase:3,deny,status:403,log"'; \
     echo '    </Location>'; \
-    echo '</VirtualHost>'; \
-    echo '# --- VirtualHost isolation ---'; \
-    echo '# Default VHost for localhost — inherits server-level config'; \
-    echo '<VirtualHost *:80>'; \
-    echo '    ServerName localhost'; \
     echo '</VirtualHost>'; \
     echo '<VirtualHost *:80>'; \
     echo '    ServerName vhost-off.test'; \
