@@ -429,6 +429,29 @@ RUN { \
     echo '<VirtualHost *:80>'; \
     echo '    ServerName localhost'; \
     echo '</VirtualHost>'; \
+    echo '# --- Bulk response-header submission (issue #46): headers_out and'; \
+    echo '# err_headers_out both reach the engine in the packed set. "Header set"'; \
+    echo '# lands in headers_out, "Header always set" in err_headers_out. They are'; \
+    echo '# "early" and at VirtualHost level: the normal mod_headers filter runs'; \
+    echo '# after CORAZA_OUT (both AP_FTYPE_CONTENT_SET, ours inserted first), so'; \
+    echo '# a late-set header is invisible to phase 3 -- a filter-order limitation,'; \
+    echo '# not what is tested -- and early mode runs in post_read_request, before'; \
+    echo '# <Location> sections are merged, so only server/vhost scope applies.'; \
+    echo '<VirtualHost *:80>'; \
+    echo '    ServerName resp-headers.test'; \
+    echo '    DocumentRoot "/usr/local/apache2/htdocs"'; \
+    echo '    Coraza On'; \
+    echo '    Alias "/out" "/usr/local/apache2/htdocs/index.html"'; \
+    echo '    Alias "/err" "/usr/local/apache2/htdocs/index.html"'; \
+    echo '    Header set X-Marker "BOOMRESP" early'; \
+    echo '    Header always set X-Err "BOOMERR" early'; \
+    echo '    <Location "/out">'; \
+    echo '        SecRule RESPONSE_HEADERS:X-Marker "@contains BOOMRESP" "id:20830,phase:3,deny,status:403,log"'; \
+    echo '    </Location>'; \
+    echo '    <Location "/err">'; \
+    echo '        SecRule RESPONSE_HEADERS:X-Err "@contains BOOMERR" "id:20831,phase:3,deny,status:403,log"'; \
+    echo '    </Location>'; \
+    echo '</VirtualHost>'; \
     echo '<VirtualHost *:80>'; \
     echo '    ServerName vhost-off.test'; \
     echo '    DocumentRoot "/usr/local/apache2/htdocs"'; \

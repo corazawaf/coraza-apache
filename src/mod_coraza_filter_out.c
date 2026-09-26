@@ -13,6 +13,7 @@
  */
 
 #include "mod_coraza.h"
+#include <limits.h>
 #include <string.h>
 
 /*
@@ -148,58 +149,89 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
         ctx->phase3_done = 1;
 
-        /* Send response headers to coraza */
-        tarr = apr_table_elts(r->headers_out);
-        telts = (const apr_table_entry_t *)tarr->elts;
+        /*
+         * Collect every response header the client will see: headers_out,
+         * the Content-Type (kept in r->content_type, not in headers_out --
+         * the core output filter adds it when serializing, after us) and
+         * err_headers_out (sent even on error). Then hand the engine the
+         * whole set in one cgo crossing (issue #46), falling back to one
+         * call per header if the pack or the batch fails.
+         */
+        {
+            const apr_array_header_t *tout = apr_table_elts(r->headers_out);
+            const apr_array_header_t *terr = apr_table_elts(r->err_headers_out);
+            const apr_table_entry_t *telts;
+            coraza_header_pair_t *pairs;
+            int i, count = 0, bulk_done = 0;
 
-        for (i = 0; i < tarr->nelts; i++) {
-            if (telts[i].key == NULL) {
-                continue;
-            }
-            /* Every engine result is checked (issue #42). */
-            if (CORAZA_CALL_FAILED(coraza_add_response_header(ctx->transaction,
-                                       (char *)telts[i].key,
-                                       (int)strlen(telts[i].key),
-                                       (char *)telts[i].val,
-                                       telts[i].val ? (int)strlen(telts[i].val) : 0))) {
-                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
-                              "coraza: engine error adding response header");
-                return coraza_fail_closed_headers(f, r, ctx, bb);
-            }
-        }
+            pairs = apr_palloc(r->pool,
+                               (apr_size_t)(tout->nelts + terr->nelts + 1)
+                               * sizeof(*pairs));
 
-        /* Content-Type is stored in r->content_type, not in headers_out.
-         * Apache's core output filter adds it when serializing the response,
-         * but our filter runs before that, so we must add it explicitly. */
-        if (r->content_type != NULL) {
-            if (CORAZA_CALL_FAILED(coraza_add_response_header(ctx->transaction,
-                                       "Content-Type",
-                                       (int)strlen("Content-Type"),
-                                       (char *)r->content_type,
-                                       (int)strlen(r->content_type)))) {
-                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
-                              "coraza: engine error adding Content-Type header");
-                return coraza_fail_closed_headers(f, r, ctx, bb);
+            telts = (const apr_table_entry_t *)tout->elts;
+            for (i = 0; i < tout->nelts; i++) {
+                if (telts[i].key == NULL) {
+                    continue;
+                }
+                pairs[count].name = telts[i].key;
+                pairs[count].name_len = strlen(telts[i].key);
+                pairs[count].value = telts[i].val ? telts[i].val : "";
+                pairs[count].value_len = telts[i].val ? strlen(telts[i].val) : 0;
+                count++;
             }
-        }
-
-        /* Also send err_headers_out (headers sent even on error) */
-        tarr = apr_table_elts(r->err_headers_out);
-        telts = (const apr_table_entry_t *)tarr->elts;
-
-        for (i = 0; i < tarr->nelts; i++) {
-            if (telts[i].key == NULL) {
-                continue;
+            if (r->content_type != NULL) {
+                pairs[count].name = "Content-Type";
+                pairs[count].name_len = strlen("Content-Type");
+                pairs[count].value = r->content_type;
+                pairs[count].value_len = strlen(r->content_type);
+                count++;
             }
-            /* Every engine result is checked (issue #42). */
-            if (CORAZA_CALL_FAILED(coraza_add_response_header(ctx->transaction,
-                                       (char *)telts[i].key,
-                                       (int)strlen(telts[i].key),
-                                       (char *)telts[i].val,
-                                       telts[i].val ? (int)strlen(telts[i].val) : 0))) {
-                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
-                              "coraza: engine error adding response header");
-                return coraza_fail_closed_headers(f, r, ctx, bb);
+            telts = (const apr_table_entry_t *)terr->elts;
+            for (i = 0; i < terr->nelts; i++) {
+                if (telts[i].key == NULL) {
+                    continue;
+                }
+                pairs[count].name = telts[i].key;
+                pairs[count].name_len = strlen(telts[i].key);
+                pairs[count].value = telts[i].val ? telts[i].val : "";
+                pairs[count].value_len = telts[i].val ? strlen(telts[i].val) : 0;
+                count++;
+            }
+
+            if (count == 0) {
+                bulk_done = 1;
+            } else {
+                int packed_len;
+                char *packed = coraza_pack_headers(r->pool, pairs, count,
+                                                   &packed_len);
+                if (packed != NULL) {
+                    if (!CORAZA_CALL_FAILED(coraza_add_response_headers(
+                            ctx->transaction, packed, packed_len, count))) {
+                        bulk_done = 1;
+                    } else {
+                        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                                      "coraza: bulk response-header submission "
+                                      "failed, falling back to per-header path");
+                    }
+                }
+            }
+
+            for (i = 0; !bulk_done && i < count; i++) {
+                if (pairs[i].name_len > INT_MAX || pairs[i].value_len > INT_MAX) {
+                    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                                  "coraza: response header too long to inspect");
+                    return coraza_fail_closed_headers(f, r, ctx, bb);
+                }
+                /* Every engine result is checked (issue #42). */
+                if (CORAZA_CALL_FAILED(coraza_add_response_header(ctx->transaction,
+                                           (char *)pairs[i].name,
+                                           (int)pairs[i].name_len,
+                                           (char *)pairs[i].value,
+                                           (int)pairs[i].value_len))) {
+                    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                                  "coraza: engine error adding response header");
+                    return coraza_fail_closed_headers(f, r, ctx, bb);
+                }
             }
         }
 

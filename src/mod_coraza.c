@@ -10,6 +10,7 @@
 
 #include "mod_coraza.h"
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
@@ -151,6 +152,73 @@ waf_cache_add(unsigned long hash, apr_array_header_t *rules, coraza_waf_t waf,
     g_waf_cache[g_waf_cache_count].rules = copy;
     g_waf_cache[g_waf_cache_count].waf = waf;
     g_waf_cache_count++;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Bulk header packing                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Wire format shared with coraza-nginx (ngx_http_coraza_pack_headers): for
+ * each header, name_len as u16 big-endian, the name, value_len as u32
+ * big-endian, the value. libcoraza walks it with `count` as the number of
+ * entries and rejects any framing that does not add up (issue #46).
+ */
+char *
+coraza_pack_headers(apr_pool_t *p, const coraza_header_pair_t *pairs,
+                    int count, int *packed_len)
+{
+    size_t total = 0;
+    char *buf, *q;
+    int i;
+
+    for (i = 0; i < count; i++) {
+        size_t nlen = pairs[i].name_len;
+        size_t vlen = pairs[i].value_len;
+
+        /* Lengths must round-trip through the u16 / u32 fields and the int
+         * packed_len libcoraza takes; anything else is a pack failure and
+         * the caller falls back to the per-header path. */
+        if (nlen > 0xffff || vlen > INT_MAX) {
+            return NULL;
+        }
+        if (total > (size_t)INT_MAX - 6
+            || nlen > (size_t)INT_MAX - 6 - total
+            || vlen > (size_t)INT_MAX - 6 - total - nlen) {
+            return NULL;
+        }
+        total += 6 + nlen + vlen;
+    }
+
+    if (total == 0) {
+        return NULL;
+    }
+
+    buf = apr_palloc(p, total);
+    q = buf;
+    for (i = 0; i < count; i++) {
+        size_t nlen = pairs[i].name_len;
+        size_t vlen = pairs[i].value_len;
+
+        *q++ = (char)((nlen >> 8) & 0xff);
+        *q++ = (char)(nlen & 0xff);
+        if (nlen) {
+            memcpy(q, pairs[i].name, nlen);
+            q += nlen;
+        }
+        *q++ = (char)((vlen >> 24) & 0xff);
+        *q++ = (char)((vlen >> 16) & 0xff);
+        *q++ = (char)((vlen >> 8) & 0xff);
+        *q++ = (char)(vlen & 0xff);
+        if (vlen) {
+            memcpy(q, pairs[i].value, vlen);
+            q += vlen;
+        }
+    }
+
+    *packed_len = (int)total;
+    return buf;
 }
 
 

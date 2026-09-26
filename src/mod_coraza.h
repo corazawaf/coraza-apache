@@ -150,6 +150,25 @@ extern module AP_MODULE_DECLARE_DATA coraza_module;
 
 /* mod_coraza.c */
 
+/*
+ * One header for the bulk submission path (coraza_add_request_headers /
+ * coraza_add_response_headers): libcoraza takes the whole set packed as
+ * u16 name_len, name, u32 value_len, value (big-endian), in one call.
+ */
+typedef struct {
+    const char *name;
+    size_t      name_len;
+    const char *value;
+    size_t      value_len;
+} coraza_header_pair_t;
+
+/* Pack the pairs into libcoraza's bulk wire format, allocated from p. Returns
+ * NULL when a name exceeds 65535 bytes, a value exceeds INT_MAX or the packed
+ * total would not fit the int libcoraza takes; *packed_len is set otherwise
+ * (0 with a non-NULL result is impossible: count must be > 0). */
+char *coraza_pack_headers(apr_pool_t *p, const coraza_header_pair_t *pairs,
+                          int count, int *packed_len);
+
 /* Check WAF intervention; return HTTP status (e.g. 403) or OK if none.
  * If early_log is set, triggers audit logging before returning. */
 int coraza_process_intervention(coraza_transaction_t transaction,
