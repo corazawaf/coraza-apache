@@ -91,6 +91,15 @@ typedef struct {
  */
 #define CORAZA_DEFAULT_BODY_MEM_LIMIT (128 * 1024)   /* 128 KiB */
 
+/*
+ * Size of each ap_get_client_block() read in fixups. Every chunk costs one
+ * engine submission, one intervention poll and one copy into the replay
+ * brigade or the spool file, so 64 KiB reads (16 per MiB, as coraza-nginx
+ * does) instead of 8 KiB (128 per MiB) cut that overhead eightfold. The
+ * buffer comes from the request pool, not the stack (issue #45).
+ */
+#define CORAZA_BODY_READ_CHUNK (64 * 1024)           /* 64 KiB */
+
 #ifndef CORAZA_MAX_DELAYED_BODY
 #define CORAZA_MAX_DELAYED_BODY (1024 * 1024)   /* 1 MiB */
 #endif

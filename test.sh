@@ -780,6 +780,17 @@ check_source_in_func "empty-WAF fallback releases the coraza_new_waf error strin
 check_source "no libc free() on a libcoraza string" mod_coraza.c '(^|[^[:alnum:]_])free[[:space:]]*\([[:space:]]*(error|err)[[:space:]]*\)' !
 echo ""
 
+echo "--- Source contract: request body read in 64 KiB chunks off the stack (issue #45) ---"
+# Each chunk read in fixups costs an engine submission, an intervention poll
+# and a copy into the replay brigade or the spool, so the read size is part
+# of the module's cost model: 64 KiB like coraza-nginx, from the request pool.
+# The 20 KB and 300 KB replay tests below stay byte-exact across the change.
+check_source "read chunk is 64 KiB" mod_coraza.h 'define CORAZA_BODY_READ_CHUNK \(64 \* 1024\)'
+check_source_in_func "fixups reads with the chunk constant" mod_coraza_phase1.c coraza_post_read_request 'ap_get_client_block\(r, buf,'
+check_source_in_func "read buffer comes from the request pool" mod_coraza_phase1.c coraza_post_read_request 'apr_palloc\(r->pool, CORAZA_BODY_READ_CHUNK\)'
+check_source "no stack read buffer left in fixups" mod_coraza_phase1.c '^[[:space:]]*char buf\[' !
+echo ""
+
 echo "--- Source contract: every engine result is checked (issue #42) ---"
 # An engine error on any phase or header submission must fail the request
 # closed, never let it continue uninspected. Every coraza_process_* call goes
