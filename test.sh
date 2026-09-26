@@ -734,13 +734,24 @@ check "htaccess: Coraza Off SQLi"     "$URL/htaccess-disabled/?id=1%20OR%201=1" 
 # Two .htaccess policies whose rule text collides under the cache's DJB2 hash
 # with the same rule count ("ARGS:xb" vs "ARGS:yA"). Each directory must run
 # its own rules, whichever WAF was built first (issue #43). The cache is per
-# child process, so A is requested enough times first to get its WAF built
-# and cached in every child before B is looked up.
-i=0; while [ $i -lt 24 ]; do curl -s -o /dev/null "$URL/htaccess-collide-a/?xb=1"; i=$((i+1)); done
-check "htaccess collision: A denies its own arg"   "$URL/htaccess-collide-a/?xb=1"   403
-check "htaccess collision: A passes B's arg"       "$URL/htaccess-collide-a/?yA=1"   200
-check "htaccess collision: B denies its own arg"   "$URL/htaccess-collide-b/?yA=1"   403
-check "htaccess collision: B passes A's arg"       "$URL/htaccess-collide-b/?xb=1"   200
+# child process, so the four requests go over one keep-alive connection: a
+# connection is served by a single child, which builds and caches A on the
+# first request and then looks B up in that same cache.
+codes=$(curl -s -w '%{http_code} ' -o /dev/null -o /dev/null -o /dev/null -o /dev/null \
+    "$URL/htaccess-collide-a/?xb=1" "$URL/htaccess-collide-a/?yA=1" \
+    "$URL/htaccess-collide-b/?yA=1" "$URL/htaccess-collide-b/?xb=1")
+set -- $codes
+for spec in "A denies its own arg:403:${1:-none}" "A passes B's arg:200:${2:-none}" \
+            "B denies its own arg:403:${3:-none}" "B passes A's arg:200:${4:-none}"; do
+    desc=${spec%%:*}; rest=${spec#*:}; want=${rest%%:*}; got=${rest#*:}
+    if [ "$got" = "$want" ]; then
+        printf "  PASS  htaccess collision: %s -> %s\n" "$desc" "$got"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  htaccess collision: %s -> %s (expected %s)\n" "$desc" "$got" "$want"
+        FAIL=$((FAIL + 1))
+    fi
+done
 check_no_crash ".htaccess tests"
 echo ""
 

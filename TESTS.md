@@ -58,7 +58,7 @@ Clean requests return 405 (WAF passes, Apache rejects method).
 | Context | Tests | Covers |
 |---------|-------|--------|
 | `<Directory>` | 5 | Custom rule block/pass, `Coraza Off` bypass |
-| `.htaccess` | 8 | Custom rule block/pass, `Coraza Off` bypass; two policies whose rule text collides under the WAF cache's DJB2 hash with the same rule count (`ARGS:xb` / `ARGS:yA`) each run their own rules (issue #43) |
+| `.htaccess` | 8 | Custom rule block/pass, `Coraza Off` bypass; two policies whose rule text collides under the WAF cache's DJB2 hash with the same rule count (`ARGS:xb` / `ARGS:yA`) each run their own rules; the four requests share one keep-alive connection so a single child's cache serves them all (issue #43) |
 | CRS inheritance | 3 | Server-level CRS rules apply in Directory/.htaccess |
 
 ### Per-Phase Processing (12 tests)
