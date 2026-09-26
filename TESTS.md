@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **257 tests** against a Docker
+The integration test suite (`test.sh`) runs **258 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (257 tests, event MPM)
+# Full suite (258 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (177 tests, no audit/debug log checks, no MPM verification)
+# Minimal (178 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -143,14 +143,17 @@ vhost level because the normal mod_headers filter runs after `CORAZA_OUT`
 Five source-contract checks pin the required symbols, both bulk call sites and
 the packer's u16 guard. Followed by a crash sweep.
 
-### Source contract: every engine result is checked (10 tests)
+### Source contract: every engine result is checked (11 tests)
 
 Issue #42. Greps over `src/` proving that every `coraza_process_*` call goes
 through `coraza_process_failed()` and every `coraza_add_*` / `coraza_append_*`
 call through `CORAZA_CALL_FAILED()`: six positive checks scoped to
-`coraza_post_read_request` and `coraza_output_filter`, three negative checks
-that no engine call opens a line bare in the phase-1, input-filter and
-output-filter sources, and one that a failing `apr_bucket_read()` no longer
+`coraza_post_read_request` and `coraza_output_filter`, two negative checks
+that no engine call opens a line bare in the phase-1 and output-filter
+sources, one that the input filter never calls the engine at all (it only
+replays the body, the pre-#35 inspection path is gone, issue #47), one that
+the unused `coraza_request_body_from_file` binding is gone, and one that a
+failing `apr_bucket_read()` no longer
 returns its status bare (it takes `coraza_fail_closed_response()`, so a
 delayed response still gets a clean 500). No `--container` needed.
 
@@ -317,7 +320,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 257-test suite passes after all restarts.
+restarts (1s apart). Full 258-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered

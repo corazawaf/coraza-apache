@@ -197,7 +197,7 @@ int coraza_post_read_request(request_rec *r);
 
 /* mod_coraza_body_in.c */
 
-/* Input filter fallback: inspects body if fixups didn't read it. */
+/* Input filter: replays the body that fixups consumed to the handler. */
 apr_status_t coraza_input_filter(ap_filter_t *f, apr_bucket_brigade *bb,
                                  ap_input_mode_t mode, apr_read_type_e block,
                                  apr_off_t readbytes);
