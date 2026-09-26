@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **236 tests** against a Docker
+The integration test suite (`test.sh`) runs **241 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (236 tests, event MPM)
+# Full suite (241 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (158 tests, no audit/debug log checks, no MPM verification)
+# Minimal (162 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+77 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+78 tests) |
 
 ## Test Categories
 
@@ -204,7 +204,7 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
-### Crash and worker-health sweep (41 tests: 40 sweeps + 1 self-test, requires `--container`)
+### Crash and worker-health sweep (42 tests: 41 sweeps + 1 self-test, requires `--container`)
 
 Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
 that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
@@ -256,6 +256,17 @@ what it received.
 | PUT static file with body: 405, not 400 | exhausted replay delegates instead of returning `APR_EOF` |
 | POST 300 KB multipart upload is delivered intact | body past `CorazaRequestBodyInMemoryLimit` is spooled to a temp file and replayed as a file bucket |
 
+### SecRequestBodyAccess Off: body not submitted to the engine (4 tests)
+
+Issue #44. With body access off the engine discards every body byte, so the
+fixups hook keeps reading, spooling and replaying the body (the handler
+depends on the replay) but no longer calls `coraza_append_request_body()` or
+polls for an intervention per chunk. `/echo-bodyoff` carries a body-matching
+and a header-matching phase-2 rule: the body rule must not fire and the CGI
+must echo the full body with the right `Content-Length`; the header rule must
+still fire, proving phase 2 ran. `/echo-bodyon` has the same body rule with
+access on, as the control that the rule works. Followed by a crash sweep.
+
 ## Apache Config Under Test
 
 The Docker image configures:
@@ -276,7 +287,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 236-test suite passes after all restarts.
+restarts (1s apart). Full 241-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered

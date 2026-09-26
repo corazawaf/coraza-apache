@@ -1011,6 +1011,23 @@ rm -f "$upload"
 check_no_crash "Request body reaches the handler (issue #34)"
 echo ""
 
+echo "--- SecRequestBodyAccess Off: body read and replayed, not submitted (issue #44) ---"
+# With body access off the engine discards every body byte, so the module no
+# longer hands it the chunks. The read and the replay stay: the CGI must still
+# get the full body. Phase 2 still runs, so a header rule in it still fires.
+# Form-encoded on purpose: CRS rejects text/plain at phase 1 (920420), and
+# the JSON body processor does not populate REQUEST_BODY, so only the
+# urlencoded processor exercises the body rule the control relies on.
+check_post_body "Body off: body-matching phase-2 rule does not fire, body delivered" \
+    "$URL/echo-bodyoff" "application/x-www-form-urlencoded" "BODYOFFATTACK-payload-1234" 200 'BODY=\[BODYOFFATTACK-payload-1234\]'
+check_post_body "Body off: CGI sees the full Content-Length" \
+    "$URL/echo-bodyoff" "application/x-www-form-urlencoded" "BODYOFFATTACK-payload-1234" 200 'CONTENT_LENGTH=\[26\]'
+check_curl "Body off: header-matching phase-2 rule still fires" "$URL/echo-bodyoff" 403 \
+    -X POST -H "X-Phase2: attack" --data-binary "cleandata"
+check_post "Body on (control): the same body rule fires" "$URL/echo-bodyon" "BODYOFFATTACK-payload-1234" 403
+check_no_crash "SecRequestBodyAccess Off body path (issue #44)"
+echo ""
+
 if [ -n "$CONTAINER" ]; then
     echo "--- Config validation: ruleless \"Coraza On\" is rejected (issue #39) ---"
     # "Coraza On" with no rule directive anywhere must fail httpd -t rather

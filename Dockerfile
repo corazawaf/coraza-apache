@@ -223,6 +223,8 @@ RUN { \
     echo 'ScriptAlias "/sse-nearmiss" "/usr/local/apache2/cgi-bin/sse"'; \
     echo 'ScriptAlias "/bulk-delayed" "/usr/local/apache2/cgi-bin/bulk"'; \
     echo 'ScriptAlias "/echo" "/usr/local/apache2/cgi-bin/echo"'; \
+    echo 'ScriptAlias "/echo-bodyoff" "/usr/local/apache2/cgi-bin/echo"'; \
+    echo 'ScriptAlias "/echo-bodyon" "/usr/local/apache2/cgi-bin/echo"'; \
     echo 'ScriptAlias "/stream-json-off" "/usr/local/apache2/cgi-bin/stream-json"'; \
     echo 'ScriptAlias "/stream-json-mime" "/usr/local/apache2/cgi-bin/stream-json"'; \
     echo 'ScriptAlias "/stream-json-on" "/usr/local/apache2/cgi-bin/stream-json"'; \
@@ -235,6 +237,20 @@ RUN { \
     echo '# and the spool path (default is 128 KiB).'; \
     echo '<Location "/echo">'; \
     echo '    CorazaRequestBodyInMemoryLimit 65536'; \
+    echo '</Location>'; \
+    echo '# --- SecRequestBodyAccess Off: body not submitted to the engine (issue #44) ---'; \
+    echo '# The body-matching phase-2 rule must not fire (the engine never sees the'; \
+    echo '# bytes), the header-matching phase-2 rule must, and the CGI must still'; \
+    echo '# receive the whole body. /echo-bodyon carries the same rules with access'; \
+    echo '# on, as the control that the body rule itself works.'; \
+    echo '<Location "/echo-bodyoff">'; \
+    echo '    SecRequestBodyAccess Off'; \
+    echo '    SecRule REQUEST_BODY "@contains BODYOFFATTACK" "id:20020,phase:2,deny,status:403,log"'; \
+    echo '    SecRule REQUEST_HEADERS:X-Phase2 "@streq attack" "id:20021,phase:2,deny,status:403,log"'; \
+    echo '</Location>'; \
+    echo '<Location "/echo-bodyon">'; \
+    echo '    SecRequestBodyAccess On'; \
+    echo '    SecRule REQUEST_BODY "@contains BODYOFFATTACK" "id:20022,phase:2,deny,status:403,log"'; \
     echo '</Location>'; \
     echo '<Location "/sse-stream">'; \
     echo '    SetEnv SSE_CT "text/event-stream"'; \

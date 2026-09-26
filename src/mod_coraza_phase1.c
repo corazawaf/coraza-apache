@@ -307,6 +307,16 @@ coraza_post_read_request(request_rec *r)
             apr_off_t saved_len = 0;
             apr_file_t *spool = NULL;
             apr_off_t spool_len = 0;
+            /*
+             * Under SecRequestBodyAccess Off the engine discards every body
+             * byte it is handed, so pushing the chunks across the C/Go
+             * boundary (and polling for an intervention after each) is pure
+             * overhead (issue #44). The read itself cannot be skipped: the
+             * handler depends on the replay. Phase 2 still runs below so its
+             * header and URI rules fire.
+             */
+            int inspect_body =
+                coraza_is_request_body_accessible(ctx->transaction);
 
             ctx->saved_body = apr_brigade_create(r->pool,
                                                  r->connection->bucket_alloc);
@@ -341,6 +351,10 @@ coraza_post_read_request(request_rec *r)
                         return HTTP_INTERNAL_SERVER_ERROR;
                     }
                     spool_len += nread;
+                }
+
+                if (!inspect_body) {
+                    continue;
                 }
 
                 if (CORAZA_CALL_FAILED(coraza_append_request_body(

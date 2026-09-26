@@ -47,6 +47,7 @@ typedef int                  (*fn_coraza_add_get_args)(coraza_transaction_t, cha
 typedef int                  (*fn_coraza_is_response_body_processable)(coraza_transaction_t);
 typedef int                  (*fn_coraza_version_num)(void);
 typedef int                  (*fn_coraza_is_response_body_accessible)(coraza_transaction_t);
+typedef int                  (*fn_coraza_is_request_body_accessible)(coraza_transaction_t);
 typedef void                 (*fn_coraza_free_string)(char *);
 
 /* ------------------------------------------------------------------ */
@@ -84,6 +85,7 @@ static fn_coraza_add_get_args            dl_add_get_args;
 static fn_coraza_is_response_body_processable dl_is_response_body_processable;
 /* Exported by libcoraza >= 1.8 (corazawaf/libcoraza#128), the module's floor. */
 static fn_coraza_is_response_body_accessible dl_is_response_body_accessible;
+static fn_coraza_is_request_body_accessible  dl_is_request_body_accessible;
 
 static dynlib_t dl_handle;
 
@@ -158,6 +160,8 @@ coraza_dl_open(server_rec *s)
     DL_SYM(dl_add_get_args,             coraza_add_get_args);
     DL_SYM(dl_is_response_body_processable,
            coraza_is_response_body_processable);
+    DL_SYM(dl_is_request_body_accessible,
+           coraza_is_request_body_accessible);
 
     /*
      * Gate on the loaded library's version. coraza_version_num() first appears
@@ -385,4 +389,11 @@ int coraza_is_response_body_processable(coraza_transaction_t t)
 int coraza_is_response_body_accessible(coraza_transaction_t t)
 {
     return dl_is_response_body_accessible(t);
+}
+
+/* Returns 1 when SecRequestBodyAccess is on for the transaction. Valid once
+ * the request headers have been processed. */
+int coraza_is_request_body_accessible(coraza_transaction_t t)
+{
+    return dl_is_request_body_accessible(t);
 }
