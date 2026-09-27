@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **278 tests** against a Docker
+The integration test suite (`test.sh`) runs **287 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (278 tests, event MPM)
+# Full suite (287 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (189 tests, no audit/debug log checks, no MPM verification)
+# Minimal (197 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+88 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+89 tests) |
 
 ## Test Categories
 
@@ -183,6 +183,20 @@ sent over a socket because curl cannot emit arbitrary versions.
 | HTTP/1.1 does not trip the raw rule | control on `/protocol-raw` (200) |
 | CRS 920430 rejects HTTP/4.0 on / | the version policy is enforceable through the connector (403) |
 
+### Raw-socket robustness (8 tests)
+
+Issue #50. `raw_exchange` writes one payload on a single socket and reports
+every status code received, in order. A phase-1 deny followed by a benign
+request pipelined on the same keep-alive socket answers `403 200` (fresh, not
+stale). A chunked body with a non-hex chunk size fails the dechunk read in
+fixups and gets 400, not 500 and no hang. `Content-Length` together with
+`Transfer-Encoding` is accepted by httpd 2.4 (Transfer-Encoding wins), so the
+conflict reaches the WAF and CRS 920640 denies it with 403. `Expect:
+100-continue` against a phase-1 trigger, body withheld, yields 403 as the first
+and only status, never an interim 100 (the deny runs before any body read).
+After each exchange a plain `GET /` must answer 200; a crash sweep closes the
+section.
+
 ### Config validation (12 tests, requires `--container`)
 
 `httpd -t` inside the container on the image's own `httpd.conf` minus the rules
@@ -248,7 +262,7 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
-### Crash and worker-health sweep (45 tests: 44 sweeps + 1 self-test, requires `--container`)
+### Crash and worker-health sweep (46 tests: 45 sweeps + 1 self-test, requires `--container`)
 
 Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
 that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
@@ -352,5 +366,5 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 278-test suite passes after all restarts.
+restarts (1s apart). Full 287-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.

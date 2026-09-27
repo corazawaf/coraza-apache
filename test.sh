@@ -447,6 +447,45 @@ check_raw() {
     fi
 }
 
+# Write one raw payload (printf %b escapes, so \r\n works) on a single socket
+# and print every HTTP status code received, in order, space-separated. Used
+# for connection-level behaviour a per-request client cannot pin: pipelined
+# requests on one keep-alive socket, hostile framing, Expect: 100-continue.
+raw_exchange() {
+    payload="$1"
+    hostport=${URL#http://}
+    hostport=${hostport%%/*}
+    host=${hostport%%:*}
+    port=${hostport##*:}
+    [ "$host" = "$port" ] && port=80
+
+    if command -v nc >/dev/null 2>&1; then
+        printf '%b' "$payload" | nc -w 5 "$host" "$port" 2>/dev/null
+    elif command -v bash >/dev/null 2>&1; then
+        bash -c 'exec 3<>"/dev/tcp/$1/$2"
+                 printf "%b" "$3" >&3
+                 timeout 5 cat <&3' _ "$host" "$port" "$payload" 2>/dev/null
+    else
+        echo "HTTP/1.1 000 no-raw-client"
+    fi | tr -d '\r' | grep -E '^HTTP/1\.[01] [0-9][0-9][0-9]' | awk '{printf "%s ", $2}' | sed 's/ $//'
+}
+
+# Assert the sequence of status codes a raw exchange yields.
+check_raw_exchange() {
+    desc="$1"
+    expected="$2"
+    payload="$3"
+
+    got=$(raw_exchange "$payload")
+    if [ "$got" = "$expected" ]; then
+        printf "  PASS  %s -> %s\n" "$desc" "$got"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> '%s' (expected '%s')\n" "$desc" "$got" "$expected"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 # Crash and worker-health sweep. Apache logs to the container's stderr
 # (ErrorLog /proc/self/fd/2), so a dying worker shows up in `docker logs` as
 # the MPM's "AH00052: child pid N exit signal ..." line, and a sanitizer
@@ -828,6 +867,33 @@ check_raw "Protocol: HTTP/4.0 reaches REQUEST_PROTOCOL verbatim" "/protocol-raw"
 check_raw "Protocol: HTTP/1.1 does not trip the raw rule"       "/protocol-raw" "HTTP/1.1" 200
 check_raw "Protocol: CRS 920430 rejects HTTP/4.0 on /"          "/"             "HTTP/4.0" 403
 check_no_crash "Request protocol tests"
+echo ""
+
+echo "--- Raw-socket robustness (issue #50) ---"
+# Connection-level behaviour, one raw socket per exchange. After each hostile
+# exchange a plain GET / must still answer 200. H is the Host header value.
+H=${URL#http://}; H=${H%%/*}
+check_raw_exchange "Keep-alive: a phase-1 deny then a benign request on one socket" "403 200" \
+    "GET /phase1?action=block403 HTTP/1.1\r\nHost: $H\r\n\r\nGET /phase1?action=safe HTTP/1.1\r\nHost: $H\r\nConnection: close\r\n\r\n"
+check "Keep-alive: server still answers"               "$URL/" 200
+# A chunk-size line that is not hex: the dechunk read fails in fixups, which
+# maps it to 400 -- never a 500, never a hang.
+check_raw_exchange "Malformed chunked body: 400, not 500" "400" \
+    "POST /echo HTTP/1.1\r\nHost: $H\r\nContent-Type: application/x-www-form-urlencoded\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n0\r\n\r\n"
+check "Malformed chunked: server still answers"        "$URL/" 200
+# Content-Length together with Transfer-Encoding: httpd 2.4 accepts the pair
+# (Transfer-Encoding wins, RFC 9112 6.3), so the conflict reaches the WAF and
+# CRS 920640 denies it in phase 1 with 403. Either way it must never be a 500.
+check_raw_exchange "CL + TE conflict: denied by CRS 920640 (403), never 500" "403" \
+    "POST /echo HTTP/1.1\r\nHost: $H\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+check "CL + TE conflict: server still answers"         "$URL/" 200
+# Expect: 100-continue against a phase-1 trigger, body withheld: the deny
+# runs in fixups before any body read, so the first and only status on the
+# socket must be 403, never an interim 100.
+check_raw_exchange "Expect: 100-continue + phase-1 trigger: 403 first, no 100" "403" \
+    "POST /phase1?action=block403 HTTP/1.1\r\nHost: $H\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 5\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n"
+check "Expect: server still answers"                   "$URL/" 200
+check_no_crash "Raw-socket robustness (issue #50)"
 echo ""
 
 echo "--- Large header inspection (length-narrowing guard) ---"
