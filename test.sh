@@ -544,6 +544,41 @@ check_raw_exchange() {
     fi
 }
 
+# HTTP/2 over cleartext, prior knowledge (no upgrade dance). Asserts the
+# status, that the exchange really ran over HTTP/2, and optionally a body
+# pattern (or its absence with "!"). Used to replay the phase-3/4 checks over
+# h2 framing (issue #51).
+check_h2c() {
+    desc="$1"
+    path="$2"
+    expected="$3"
+    body_pattern="$4"
+    negate="$5"
+
+    resp=$(curl -s --http2-prior-knowledge --max-time 10 -w "\n%{http_code} %{http_version}" "$URL$path" 2>/dev/null)
+    tail_line=$(printf '%s\n' "$resp" | tail -1)
+    code=${tail_line%% *}; ver=${tail_line##* }
+    body=$(printf '%s\n' "$resp" | sed '$d')
+
+    ok=true
+    [ "$code" = "$expected" ] || ok=false
+    [ "$ver" = "2" ] || ok=false
+    if [ -n "$body_pattern" ]; then
+        if [ "$negate" = "!" ]; then
+            printf '%s' "$body" | grep -q "$body_pattern" && ok=false
+        else
+            printf '%s' "$body" | grep -q "$body_pattern" || ok=false
+        fi
+    fi
+    if $ok; then
+        printf "  PASS  %s -> %s over HTTP/%s\n" "$desc" "$code" "$ver"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> %s over HTTP/%s (expected %s over HTTP/2%s)\n" "$desc" "${code:-none}" "${ver:-?}" "$expected" "${body_pattern:+, body ${negate}~ $body_pattern}"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 # Crash and worker-health sweep. Apache logs to the container's stderr
 # (ErrorLog /proc/self/fd/2), so a dying worker shows up in `docker logs` as
 # the MPM's "AH00052: child pid N exit signal ..." line, and a sanitizer
@@ -1033,6 +1068,27 @@ check_body "Phase 3: deny is not a recursive error"         "$URL/phase3" 403 "A
 check_body "Phase 4: deny serves the custom error page"     "$URL/phase4" 403 "CORAZA_CUSTOM_ERROR_PAGE"
 check_body "Phase 4: deny is not a recursive error"         "$URL/phase4" 403 "Additionally" "!"
 check_no_crash "Response phase tests (3+4)"
+echo ""
+
+echo "--- Phase 3/4 over HTTP/2 (h2c, issue #51) ---"
+# h2 changes the framing the header delay has to respect: the status travels
+# in a HEADERS frame and a blocked body must never become DATA frames. The
+# image speaks h2c only under the event MPM (mod_http2 does not support
+# prefork), so this section is skipped when the server does not negotiate
+# HTTP/2 -- the prefork cell then reports 8 tests fewer.
+h2ver=$(curl -s --http2-prior-knowledge --max-time 5 -o /dev/null -w '%{http_version}' "$URL/" 2>/dev/null)
+if [ "$h2ver" = "2" ]; then
+    check_h2c "h2c: plain request negotiates HTTP/2"                         "/"                              200 "OK"
+    check_h2c "h2c: phase-3 deny on Content-Type"                            "/phase3"                        403
+    check_h2c "h2c: phase-4 deny serves the error page, blocked body withheld" "/phase4"                      403 "CORAZA_CUSTOM_ERROR_PAGE"
+    check_h2c "h2c: phase-4 deny, no OK bytes reach the client"              "/phase4"                        403 "^OK" "!"
+    check_h2c "h2c: phase-4 pass delivers the body"                          "/phase4-pass"                   200 "OK"
+    check_h2c "h2c: redirect intervention keeps its status"                  "/redirect-302?target=redirect"  302
+    check_h2c "h2c: body-less 204 through the delay"                         "/status204"                     204
+    check_no_crash "Phase 3/4 over HTTP/2 (issue #51)"
+else
+    echo "  SKIP  server does not negotiate HTTP/2 (got HTTP/${h2ver:-?}); prefork MPM has no mod_http2"
+fi
 echo ""
 
 echo "--- SSE streaming (header-delay skip) ---"

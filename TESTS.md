@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **298 tests** against a Docker
+The integration test suite (`test.sh`) runs **306 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (298 tests, event MPM)
+# Full suite (306 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (201 tests, no audit/debug log checks, no MPM verification)
+# Minimal (208 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -26,8 +26,8 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 
 | Flag | Effect |
 |------|--------|
-| `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+96 tests) |
+| `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test). The HTTP/2 section is not flag-driven: it probes h2c and skips itself on a server that does not negotiate it, so a prefork image (no mod_http2) reports 8 tests fewer |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+97 tests) |
 
 ## Test Categories
 
@@ -70,6 +70,19 @@ Clean requests return 405 (WAF passes, Apache rejects method).
 | Phase 3 | output filter | 4 (RESPONSE_HEADERS:Content-Type match: deny + pass; the deny reaches the ErrorDocument, no recursive-error page) |
 | Phase 4 | output filter | 4 (RESPONSE_BODY match: deny + pass; same ErrorDocument checks) |
 | `ARGS_POST` | fixups (phase 2) | 3 (`cmd=boom` in the body denied, `cmd=safe` passes, `?cmd=boom` in the query passes: the selector is `ARGS_POST`, not `ARGS`; issue #49) |
+
+### Phase 3/4 over HTTP/2 (7 tests + 1 sweep, event MPM only)
+
+Issue #51. The image loads `mod_http2` and sets `Protocols h2c http/1.1` under
+the event MPM (mod_http2 does not support prefork). With curl's
+`--http2-prior-knowledge`, each check also asserts that the exchange ran over
+HTTP/2: a plain request negotiates h2; the phase-3 Content-Type deny and the
+phase-4 body deny return 403, the latter serving the custom error page with no
+`OK` byte of the blocked body reaching the client (over h2 a blocked body must
+never become DATA frames); the phase-4 pass delivers its body; a redirect
+intervention keeps its 302; a body-less 204 crosses the header delay. The
+section probes h2c first and skips itself, with a `SKIP` line, when the server
+does not negotiate HTTP/2.
 
 ### Config Merging (6 tests)
 
@@ -273,7 +286,7 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
-### Crash and worker-health sweep (48 tests: 47 sweeps + 1 self-test, requires `--container`)
+### Crash and worker-health sweep (49 tests: 48 sweeps + 1 self-test, requires `--container`)
 
 Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
 that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
@@ -378,7 +391,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 298-test suite passes after all restarts.
+restarts (1s apart). Full 306-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init. The
 suite itself now restarts the server once, over in-flight requests (issue #53
 above).

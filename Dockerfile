@@ -139,6 +139,10 @@ RUN { \
       echo 'LoadModule cgi_module modules/mod_cgi.so'; \
     else \
       echo 'LoadModule cgid_module modules/mod_cgid.so'; \
+      # HTTP/2 over cleartext (h2c) so the phase-3/4 tests can run over h2 too \
+      # (issue #51). mod_http2 does not support the prefork MPM. \
+      echo 'LoadModule http2_module modules/mod_http2.so'; \
+      echo 'Protocols h2c http/1.1'; \
     fi; \
     echo 'Coraza On'; \
     echo 'CorazaRulesFile /etc/coraza/coraza-waf.conf'; \
