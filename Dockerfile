@@ -385,6 +385,30 @@ RUN { \
     echo '    SecRule ARGS:what "@streq sub4" "id:31005,phase:1,pass,log"'; \
     echo '    SecRule ARGS:what "@streq sub4withE" "id:31006,phase:1,pass,log,ctl:auditLogParts=+E"'; \
     echo '</Location>'; \
+    echo '# --- DetectionOnly proven via the audit log (issue #49) ---'; \
+    echo '# Same deny rule as /phase1. Under DetectionOnly the match must be logged'; \
+    echo '# but not enforced; the On twin enforces it. Only the audit line'; \
+    echo '# separates "matched, declined to block" from "never ran".'; \
+    echo '<Location "/detection-only">'; \
+    echo '    SecRuleEngine DetectionOnly'; \
+    echo '    SecAuditEngine On'; \
+    echo '    SecAuditLogParts ABHZ'; \
+    echo '    SecAuditLogType Serial'; \
+    echo '    SecAuditLog /var/log/coraza/audit/detection.log'; \
+    echo '    SecRule ARGS:action "@streq block403" "id:32001,phase:1,deny,status:403,log,msg:detection-only-match"'; \
+    echo '</Location>'; \
+    echo '<Location "/detection-only-on">'; \
+    echo '    SecRuleEngine On'; \
+    echo '    SecAuditEngine On'; \
+    echo '    SecAuditLogParts ABHZ'; \
+    echo '    SecAuditLogType Serial'; \
+    echo '    SecAuditLog /var/log/coraza/audit/detection-on.log'; \
+    echo '    SecRule ARGS:action "@streq block403" "id:32002,phase:1,deny,status:403,log,msg:detection-on-match"'; \
+    echo '</Location>'; \
+    echo '# --- ARGS_POST selector (issue #49): body arguments only, not the query ---'; \
+    echo '<Location "/args-post">'; \
+    echo '    SecRule ARGS_POST:cmd "@streq boom" "id:32010,phase:2,deny,status:403,log"'; \
+    echo '</Location>'; \
     echo '# --- auditlog action with RelevantOnly ---'; \
     echo '<Location "/auditlog-relevant">'; \
     echo '    SecAuditEngine RelevantOnly'; \
