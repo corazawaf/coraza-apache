@@ -6,11 +6,19 @@
 # which reaches the has-EOS path before the not-last-buffer cap can trip.
 #
 # Total: 16 * 256 KiB = 4 MiB, comfortably over the 1 MiB cap.
-/usr/bin/printf 'Content-Type: application/octet-stream\r\n\r\n'
+#
+# A client may abort mid-download (issue #53). With SIGPIPE at its default the
+# script would die of it, and on prefork (mod_cgi) that death is reaped as an
+# "AH00052 ... exit signal Broken pipe" line that the crash sweep reads as a
+# worker crash. Ignore the signal, treat the EPIPE write error as "client
+# gone" and leave quietly.
+trap '' PIPE
+/usr/bin/printf 'Content-Type: application/octet-stream\r\n\r\n' || exit 0
 
 i=0
 while [ "$i" -lt 16 ]; do
-    dd if=/dev/zero bs=262144 count=1 2>/dev/null | tr '\0' 'A'
+    dd if=/dev/zero bs=262144 count=1 2>/dev/null | tr '\0' 'A' 2>/dev/null || break
     i=$((i + 1))
     sleep 0.2
 done
+exit 0

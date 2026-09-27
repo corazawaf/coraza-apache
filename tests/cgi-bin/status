@@ -1,0 +1,8 @@
+#!/bin/sh
+# Emits a body-less response with the status given by the STATUS_CODE
+# environment variable (SetEnv in the Location), under a Content-Type that is
+# inside SecResponseBodyMimeType so the output filter engages its header
+# delay. The delay must release the headers on the EOS that follows at once,
+# neither waiting for a body that never comes nor altering the status
+# (issue #52).
+/usr/bin/printf 'Status: %s\r\nContent-Type: text/html\r\n\r\n' "${STATUS_CODE:-204}"

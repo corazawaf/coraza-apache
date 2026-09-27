@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **268 tests** against a Docker
+The integration test suite (`test.sh`) runs **298 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (268 tests, event MPM)
+# Full suite (298 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (181 tests, no audit/debug log checks, no MPM verification)
+# Minimal (201 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+86 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+96 tests) |
 
 ## Test Categories
 
@@ -99,6 +99,16 @@ Clean requests return 405 (WAF passes, Apache rejects method).
 
 Custom `deny,status:401` rules. Verifies CRS rules still return 403
 while custom rules return their configured status.
+
+### Redirect interventions and response header guards (12 tests)
+
+`redirect:` rules with `status:301` / `302`: status and `Location` are exactly
+the configured target, a clean path and query survive, and no header can be
+smuggled into a clean response. Issue #54 adds a target carrying a raw CR and
+one carrying a raw DEL byte (written into the config with `printf`): the
+connector truncates `Location` at the first C0 control or DEL byte, so each
+answers 302 with exactly one `Location` cut to `http://example.org/a`, and
+logs a warning (checked in the container log, +1 test with `--container`).
 
 ### Location Rule Isolation (6 tests)
 
@@ -173,6 +183,31 @@ sent over a socket because curl cannot emit arbitrary versions.
 | HTTP/1.1 does not trip the raw rule | control on `/protocol-raw` (200) |
 | CRS 920430 rejects HTTP/4.0 on / | the version policy is enforceable through the connector (403) |
 
+### Raw-socket robustness (8 tests)
+
+Issue #50. `raw_exchange` writes one payload on a single socket and reports
+every status code received, in order. A phase-1 deny followed by a benign
+request pipelined on the same keep-alive socket answers `403 200` (fresh, not
+stale). A chunked body with a non-hex chunk size fails the dechunk read in
+fixups and gets 400, not 500 and no hang. `Content-Length` together with
+`Transfer-Encoding` is accepted by httpd 2.4 (Transfer-Encoding wins), so the
+conflict reaches the WAF and CRS 920640 denies it with 403. `Expect:
+100-continue` against a phase-1 trigger, body withheld, yields 403 as the first
+and only status, never an interim 100 (the deny runs before any body read).
+After each exchange a plain `GET /` must answer 200; a crash sweep closes the
+section.
+
+### In-flight cancellation and graceful restart (4 + 5 tests, 5 require `--container`)
+
+Issue #53. A client announces a 100000-byte body, sends 10 bytes and hangs up
+while fixups is mid-read (the send itself is asserted); another receives the
+200 of a delayed 4 MiB download and is cut by its own 2 s cap (curl exit 28),
+so the abort lands mid-response. After each, `GET /` must answer 200. With
+`--container`, an SSE stream and a delayed download are in flight when
+`httpd -k graceful` runs (its exit status is asserted): each must complete or
+be cut cleanly (curl exit 0, or 28 on its own cap, never a reset), the new
+workers must answer 200 and still enforce a phase-1 rule. Each half ends with a crash sweep.
+
 ### Config validation (12 tests, requires `--container`)
 
 `httpd -t` inside the container on the image's own `httpd.conf` minus the rules
@@ -238,7 +273,7 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
-### Crash and worker-health sweep (44 tests: 43 sweeps + 1 self-test, requires `--container`)
+### Crash and worker-health sweep (48 tests: 47 sweeps + 1 self-test, requires `--container`)
 
 Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
 that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
@@ -281,6 +316,16 @@ proving phase 4 is finalised before the headers go out rather than skipped.
 The same holds for SSE: `text/event-stream` is outside the MIME list, so an SSE
 response takes this path too and a phase-4 `ARGS` rule denies it cleanly (the
 SSE shortcut only applies to an inspected stream, which can never finish).
+
+### Body-less responses through the header delay (4 tests)
+
+Issue #52. `/status204` and `/status304` are one CGI (`tests/cgi-bin/status`)
+answering with the status from `SetEnv STATUS_CODE`, under `text/html` so the
+header delay engages, and with a phase-4 `RESPONSE_BODY` rule armed. With no
+body, the delay must release the headers on the immediate EOS (a 5 s cap
+catches a hang) and the status must come through untouched; a raw-socket read
+checks that not one byte follows the headers (curl discards a 204/304 body by
+design, so it cannot tell). Followed by a crash sweep.
 
 ### Delayed response cap log (1 test, requires `--container`)
 
@@ -333,9 +378,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 268-test suite passes after all restarts.
-Old workers clean up WAFs on exit, new workers rebuild via child_init.
-
-## What's Not Covered
-
-- Redirect interventions (`intervention->url` not available in libcoraza)
+restarts (1s apart). Full 298-test suite passes after all restarts.
+Old workers clean up WAFs on exit, new workers rebuild via child_init. The
+suite itself now restarts the server once, over in-flight requests (issue #53
+above).

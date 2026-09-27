@@ -447,6 +447,103 @@ check_raw() {
     fi
 }
 
+# Write one raw payload (printf %b escapes, so \r\n works) on a single socket
+# and print every HTTP status code received, in order, space-separated. Used
+# for connection-level behaviour a per-request client cannot pin: pipelined
+# requests on one keep-alive socket, hostile framing, Expect: 100-continue.
+raw_exchange() {
+    payload="$1"
+    hostport=${URL#http://}
+    hostport=${hostport%%/*}
+    host=${hostport%%:*}
+    port=${hostport##*:}
+    [ "$host" = "$port" ] && port=80
+
+    if command -v nc >/dev/null 2>&1; then
+        printf '%b' "$payload" | nc -w 5 "$host" "$port" 2>/dev/null
+    elif command -v bash >/dev/null 2>&1; then
+        bash -c 'exec 3<>"/dev/tcp/$1/$2"
+                 printf "%b" "$3" >&3
+                 timeout 5 cat <&3' _ "$host" "$port" "$payload" 2>/dev/null
+    else
+        echo "HTTP/1.1 000 no-raw-client"
+    fi | tr -d '\r' | grep -E '^HTTP/1\.[01] [0-9][0-9][0-9]' | awk '{printf "%s ", $2}' | sed 's/ $//'
+}
+
+# Send a payload and hang up right after it (a client aborting mid-request),
+# draining whatever comes back for at most 5 s. Output is discarded: the
+# assertion is that the server is still healthy afterwards.
+raw_abort() {
+    payload="$1"
+    hostport=${URL#http://}
+    hostport=${hostport%%/*}
+    host=${hostport%%:*}
+    port=${hostport##*:}
+    [ "$host" = "$port" ] && port=80
+
+    if command -v nc >/dev/null 2>&1 && nc -h 2>&1 | grep -q -- '-N'; then
+        printf '%b' "$payload" | nc -N -w 5 "$host" "$port" >/dev/null 2>&1
+    elif command -v bash >/dev/null 2>&1; then
+        bash -c 'exec 3<>"/dev/tcp/$1/$2" && printf "%b" "$3" >&3 && exec 3>&-' _ "$host" "$port" "$payload" 2>/dev/null
+    else
+        return 1
+    fi
+}
+
+# Full raw response (headers and body, CR stripped) to one GET, bounded to 5 s.
+raw_response() {
+    path="$1"
+    hostport=${URL#http://}
+    hostport=${hostport%%/*}
+    host=${hostport%%:*}
+    port=${hostport##*:}
+    [ "$host" = "$port" ] && port=80
+
+    if command -v nc >/dev/null 2>&1; then
+        printf 'GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n' "$path" "$host" | nc -w 5 "$host" "$port" 2>/dev/null
+    elif command -v bash >/dev/null 2>&1; then
+        bash -c 'exec 3<>"/dev/tcp/$1/$2"
+                 printf "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n" "$3" "$1" >&3
+                 timeout 5 cat <&3' _ "$host" "$port" "$path" 2>/dev/null
+    fi | tr -d '\r'
+}
+
+# Assert a body-less response on the wire: the expected status line and not a
+# single byte after the blank line that ends the headers. curl cannot tell,
+# it discards the body of a 204/304 by design.
+check_raw_bodyless() {
+    desc="$1"
+    path="$2"
+    expected="$3"
+
+    resp=$(raw_response "$path")
+    code=$(printf '%s\n' "$resp" | head -1 | awk '{print $2}')
+    body=$(printf '%s\n' "$resp" | awk 'blank {print} /^$/ {blank=1}')
+    if [ "$code" = "$expected" ] && [ -z "$body" ]; then
+        printf "  PASS  %s -> %s, empty body on the wire\n" "$desc" "$code"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> %s, body bytes: %s\n" "$desc" "${code:-none}" "$(printf '%s' "$body" | wc -c)"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+# Assert the sequence of status codes a raw exchange yields.
+check_raw_exchange() {
+    desc="$1"
+    expected="$2"
+    payload="$3"
+
+    got=$(raw_exchange "$payload")
+    if [ "$got" = "$expected" ]; then
+        printf "  PASS  %s -> %s\n" "$desc" "$got"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> '%s' (expected '%s')\n" "$desc" "$got" "$expected"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 # Crash and worker-health sweep. Apache logs to the container's stderr
 # (ErrorLog /proc/self/fd/2), so a dying worker shows up in `docker logs` as
 # the MPM's "AH00052: child pid N exit signal ..." line, and a sanitizer
@@ -830,6 +927,61 @@ check_raw "Protocol: CRS 920430 rejects HTTP/4.0 on /"          "/"             
 check_no_crash "Request protocol tests"
 echo ""
 
+echo "--- Raw-socket robustness (issue #50) ---"
+# Connection-level behaviour, one raw socket per exchange. After each hostile
+# exchange a plain GET / must still answer 200. H is the Host header value.
+H=${URL#http://}; H=${H%%/*}
+check_raw_exchange "Keep-alive: a phase-1 deny then a benign request on one socket" "403 200" \
+    "GET /phase1?action=block403 HTTP/1.1\r\nHost: $H\r\n\r\nGET /phase1?action=safe HTTP/1.1\r\nHost: $H\r\nConnection: close\r\n\r\n"
+check "Keep-alive: server still answers"               "$URL/" 200
+# A chunk-size line that is not hex: the dechunk read fails in fixups, which
+# maps it to 400 -- never a 500, never a hang.
+check_raw_exchange "Malformed chunked body: 400, not 500" "400" \
+    "POST /echo HTTP/1.1\r\nHost: $H\r\nContent-Type: application/x-www-form-urlencoded\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n0\r\n\r\n"
+check "Malformed chunked: server still answers"        "$URL/" 200
+# Content-Length together with Transfer-Encoding: httpd 2.4 accepts the pair
+# (Transfer-Encoding wins, RFC 9112 6.3), so the conflict reaches the WAF and
+# CRS 920640 denies it in phase 1 with 403. Either way it must never be a 500.
+check_raw_exchange "CL + TE conflict: denied by CRS 920640 (403), never 500" "403" \
+    "POST /echo HTTP/1.1\r\nHost: $H\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+check "CL + TE conflict: server still answers"         "$URL/" 200
+# Expect: 100-continue against a phase-1 trigger, body withheld: the deny
+# runs in fixups before any body read, so the first and only status on the
+# socket must be 403, never an interim 100.
+check_raw_exchange "Expect: 100-continue + phase-1 trigger: 403 first, no 100" "403" \
+    "POST /phase1?action=block403 HTTP/1.1\r\nHost: $H\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 5\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n"
+check "Expect: server still answers"                   "$URL/" 200
+check_no_crash "Raw-socket robustness (issue #50)"
+echo ""
+
+echo "--- In-flight cancellation (issue #53) ---"
+# A client that announces a 100000-byte body, sends 10 bytes and hangs up:
+# fixups is mid-read when the socket closes. Then a client that aborts a
+# delayed 4 MiB response 1 s in, while the output filter still holds it. In
+# both cases the worker must simply move on.
+if raw_abort "POST /echo HTTP/1.1\r\nHost: $H\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 100000\r\n\r\n0123456789"; then
+    printf "  PASS  Client abort mid-request-body: partial body sent, socket closed\n"
+    PASS=$((PASS + 1))
+else
+    printf "  FAIL  Client abort mid-request-body: raw client could not send\n"
+    FAIL=$((FAIL + 1))
+fi
+check "Client abort mid-request-body: server still answers"     "$URL/" 200
+# The delayed download must have started (headers flushed once the 1 MiB cap
+# trips, well within 2 s: 200) and then be cut by curl's own cap (exit 28),
+# so the abort really lands mid-response.
+abort_code=$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' "$URL/bulk-delayed" 2>/dev/null); abort_rc=$?
+if [ "$abort_rc" = 28 ] && [ "$abort_code" = 200 ]; then
+    printf "  PASS  Client abort mid-delayed-response: 200 received, then cut (curl 28)\n"
+    PASS=$((PASS + 1))
+else
+    printf "  FAIL  Client abort mid-delayed-response: curl exit %s, status %s (expected 28 / 200)\n" "$abort_rc" "$abort_code"
+    FAIL=$((FAIL + 1))
+fi
+check "Client abort mid-delayed-response: server still answers" "$URL/" 200
+check_no_crash "In-flight cancellation (issue #53)"
+echo ""
+
 echo "--- Large header inspection (length-narrowing guard) ---"
 # A large but legal header must still reach the engine in full: the trigger sits
 # at the very end of ~6 KB of padding, so a clipped length would miss it.
@@ -906,6 +1058,18 @@ check_stream "MIME mismatch: stream reaches client (not delayed)"      "$URL/str
 check_stream "Body inspected: stream still delayed until EOS"          "$URL/stream-json-on"    '"events"' absent
 check_curl   "MIME mismatch: phase-4 ARGS rule still denies cleanly"    "$URL/stream-json-mime?attack=1" 403 --max-time 5
 check_no_crash "Header delay only when the body is inspected (issue #60)"
+echo ""
+
+echo "--- Body-less responses through the header delay (issue #52) ---"
+# A CGI answers 204 / 304 with a Content-Type inside the MIME list, so the
+# header delay engages, and a phase-4 body rule is armed. With no body the
+# delay must release on the immediate EOS (no hang: 5 s cap) and the status
+# must come through untouched, with an empty body.
+check_curl "204: status passes through the delay, no hang" "$URL/status204" 204 --max-time 5
+check_raw_bodyless "204: nothing after the headers on the wire" "/status204" 204
+check_curl "304: status passes through the delay, no hang" "$URL/status304" 304 --max-time 5
+check_raw_bodyless "304: nothing after the headers on the wire" "/status304" 304
+check_no_crash "Body-less responses through the header delay (issue #52)"
 echo ""
 
 echo "--- Delayed response cap (bound worker memory) ---"
@@ -1010,6 +1174,13 @@ echo "--- Response header guards ---"
 check_head   "HEAD /: not delayed, returns 200"          "$URL/"                              200
 check_header "Redirect: Location is exactly the target"  "$URL/redirect-302?target=redirect"  "Location" "http://www.coraza.io"
 check_header "Redirect: clean path+query preserved"      "$URL/redirect-clean-path?target=redirect" "Location" "http://example.org/clean/path?a=b"
+# A raw CR or DEL byte in the redirect target (issue #54): 302, exactly one
+# Location header, its value cut at the offending byte. check_header counts
+# the header, so a split into two Location lines would fail on the count.
+check_redirect "Redirect: bare CR in target is cut, status kept"  "$URL/redirect-cr?target=redirect"  302 "http://example.org/a"
+check_header   "Redirect: bare CR in target, one Location header"  "$URL/redirect-cr?target=redirect"  "Location" "http://example.org/a"
+check_redirect "Redirect: DEL in target is cut, status kept"      "$URL/redirect-del?target=redirect" 302 "http://example.org/a"
+check_header   "Redirect: DEL in target, one Location header"      "$URL/redirect-del?target=redirect" "Location" "http://example.org/a"
 check_header "Clean response: no smuggled Set-Cookie"    "$URL/"                              "Set-Cookie" "" "!"
 check_no_crash "Response header guards"
 echo ""
@@ -1076,6 +1247,43 @@ check_no_crash "SecRequestBodyAccess Off body path (issue #44)"
 echo ""
 
 if [ -n "$CONTAINER" ]; then
+    echo "--- Graceful restart over in-flight requests (issue #53) ---"
+    # An SSE stream (never ends) and a delayed 4 MiB download are in flight
+    # when httpd -k graceful runs. Old workers must finish or cut them cleanly
+    # (curl exits 0, or 28 on its own 8 s cap, never a reset), and the new
+    # workers must be serving right after. The crash sweep closes the section.
+    curl -sN --max-time 8 -o /dev/null "$URL/sse-stream" 2>/dev/null & sse_pid=$!
+    curl -s  --max-time 8 -o /dev/null "$URL/bulk-delayed" 2>/dev/null & bulk_pid=$!
+    sleep 0.5
+    if docker exec "$CONTAINER" httpd -k graceful >/dev/null 2>&1; then
+        printf "  PASS  Graceful: httpd -k graceful accepted\n"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  Graceful: httpd -k graceful failed, the restart did not happen\n"
+        FAIL=$((FAIL + 1))
+    fi
+    wait $sse_pid;  sse_rc=$?
+    wait $bulk_pid; bulk_rc=$?
+    for rcpair in "SSE stream:$sse_rc" "delayed download:$bulk_rc"; do
+        what=${rcpair%%:*}; rc=${rcpair##*:}
+        if [ "$rc" = 0 ] || [ "$rc" = 28 ]; then
+            printf "  PASS  Graceful: %s completed or was cut cleanly (curl %s)\n" "$what" "$rc"
+            PASS=$((PASS + 1))
+        else
+            printf "  FAIL  Graceful: %s ended with curl exit %s\n" "$what" "$rc"
+            FAIL=$((FAIL + 1))
+        fi
+    done
+    i=0; while [ $i -lt 20 ] && ! curl -fs -o /dev/null "$URL/"; do sleep 0.5; i=$((i+1)); done
+    check "Graceful: new workers answer"                             "$URL/" 200
+    check "Graceful: rules still enforced after the restart"        "$URL/phase1?action=block403" 403
+    check_no_crash "Graceful restart over in-flight requests (issue #53)"
+    echo ""
+
+    echo "--- Redirect target sanitisation is logged (issue #54) ---"
+    check_container_log "Redirect: control byte in target logged as a warning" "control character in redirect target"
+    echo ""
+
     echo "--- Config validation: ruleless \"Coraza On\" is rejected (issue #39) ---"
     # "Coraza On" with no rule directive anywhere must fail httpd -t rather
     # than start an empty WAF; one rule anywhere makes it pass, and "Coraza
