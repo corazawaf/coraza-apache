@@ -908,6 +908,18 @@ check_curl   "MIME mismatch: phase-4 ARGS rule still denies cleanly"    "$URL/st
 check_no_crash "Header delay only when the body is inspected (issue #60)"
 echo ""
 
+echo "--- Body-less responses through the header delay (issue #52) ---"
+# A CGI answers 204 / 304 with a Content-Type inside the MIME list, so the
+# header delay engages, and a phase-4 body rule is armed. With no body the
+# delay must release on the immediate EOS (no hang: 5 s cap) and the status
+# must come through untouched, with an empty body.
+check_curl "204: status passes through the delay, no hang" "$URL/status204" 204 --max-time 5
+check_body "204: empty body"                                "$URL/status204" 204 '.' "!"
+check_curl "304: status passes through the delay, no hang" "$URL/status304" 304 --max-time 5
+check_body "304: empty body"                                "$URL/status304" 304 '.' "!"
+check_no_crash "Body-less responses through the header delay (issue #52)"
+echo ""
+
 echo "--- Delayed response cap (bound worker memory) ---"
 # A large delayed response must arrive intact: the cap flushes headers early
 # and streams the rest rather than buffering the whole body (or truncating it).

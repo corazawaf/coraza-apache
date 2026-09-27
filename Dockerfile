@@ -128,6 +128,8 @@ COPY tests/cgi-bin/echo /usr/local/apache2/cgi-bin/echo
 RUN chmod +x /usr/local/apache2/cgi-bin/echo
 COPY tests/cgi-bin/stream-json /usr/local/apache2/cgi-bin/stream-json
 RUN chmod +x /usr/local/apache2/cgi-bin/stream-json
+COPY tests/cgi-bin/status /usr/local/apache2/cgi-bin/status
+RUN chmod +x /usr/local/apache2/cgi-bin/status
 
 # Apache config: load module, enable coraza with CRS, FallbackResource for test URLs
 RUN { \
@@ -228,6 +230,8 @@ RUN { \
     echo 'ScriptAlias "/stream-json-off" "/usr/local/apache2/cgi-bin/stream-json"'; \
     echo 'ScriptAlias "/stream-json-mime" "/usr/local/apache2/cgi-bin/stream-json"'; \
     echo 'ScriptAlias "/stream-json-on" "/usr/local/apache2/cgi-bin/stream-json"'; \
+    echo 'ScriptAlias "/status204" "/usr/local/apache2/cgi-bin/status"'; \
+    echo 'ScriptAlias "/status304" "/usr/local/apache2/cgi-bin/status"'; \
     echo '<Directory "/usr/local/apache2/cgi-bin">'; \
     echo '    Require all granted'; \
     echo '    Options +ExecCGI'; \
@@ -268,6 +272,22 @@ RUN { \
     echo '</Location>'; \
     echo '# The delayed-body cap only applies while a body is inspected; the bulk'; \
     echo '# CGI sends application/octet-stream, so list it for the cap tests.'; \
+    echo '# --- Body-less responses through the header delay (issue #52) ---'; \
+    echo '# Body inspection is on and the phase-4 rule would match "OK", but a 204'; \
+    echo '# or 304 has no body: the delay must release the headers on EOS at once'; \
+    echo '# and leave the status alone.'; \
+    echo '<Location "/status204">'; \
+    echo '    SetEnv STATUS_CODE 204'; \
+    echo '    SecResponseBodyAccess On'; \
+    echo '    SecResponseBodyMimeType text/html'; \
+    echo '    SecRule RESPONSE_BODY "@contains OK" "id:20840,phase:4,deny,status:403,log"'; \
+    echo '</Location>'; \
+    echo '<Location "/status304">'; \
+    echo '    SetEnv STATUS_CODE 304'; \
+    echo '    SecResponseBodyAccess On'; \
+    echo '    SecResponseBodyMimeType text/html'; \
+    echo '    SecRule RESPONSE_BODY "@contains OK" "id:20841,phase:4,deny,status:403,log"'; \
+    echo '</Location>'; \
     echo '<Location "/bulk-delayed">'; \
     echo '    SecResponseBodyMimeType application/octet-stream'; \
     echo '</Location>'; \

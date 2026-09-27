@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **268 tests** against a Docker
+The integration test suite (`test.sh`) runs **273 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (268 tests, event MPM)
+# Full suite (273 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (181 tests, no audit/debug log checks, no MPM verification)
+# Minimal (185 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+86 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+87 tests) |
 
 ## Test Categories
 
@@ -238,7 +238,7 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
-### Crash and worker-health sweep (44 tests: 43 sweeps + 1 self-test, requires `--container`)
+### Crash and worker-health sweep (45 tests: 44 sweeps + 1 self-test, requires `--container`)
 
 Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
 that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
@@ -281,6 +281,15 @@ proving phase 4 is finalised before the headers go out rather than skipped.
 The same holds for SSE: `text/event-stream` is outside the MIME list, so an SSE
 response takes this path too and a phase-4 `ARGS` rule denies it cleanly (the
 SSE shortcut only applies to an inspected stream, which can never finish).
+
+### Body-less responses through the header delay (4 tests)
+
+Issue #52. `/status204` and `/status304` are one CGI (`tests/cgi-bin/status`)
+answering with the status from `SetEnv STATUS_CODE`, under `text/html` so the
+header delay engages, and with a phase-4 `RESPONSE_BODY` rule armed. With no
+body, the delay must release the headers on the immediate EOS (a 5 s cap
+catches a hang) and the status must come through untouched with an empty
+body. Followed by a crash sweep.
 
 ### Delayed response cap log (1 test, requires `--container`)
 
@@ -333,7 +342,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 268-test suite passes after all restarts.
+restarts (1s apart). Full 273-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
 
 ## What's Not Covered
