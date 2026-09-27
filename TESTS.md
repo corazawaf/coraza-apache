@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **313 tests** against a Docker
+The integration test suite (`test.sh`) runs **314 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (313 tests, event MPM)
+# Full suite (314 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (214 tests, no audit/debug log checks, no MPM verification)
+# Minimal (215 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -346,7 +346,7 @@ Companion to the delayed-response cap tests above: the container log must
 carry the "flushing headers early" line when the 4 MiB body crosses
 `CORAZA_MAX_DELAYED_BODY`.
 
-### Proxied backend through mod_proxy (6 tests)
+### Proxied backend through mod_proxy (7 tests)
 
 Issue #55. The image listens on a second port (8081) with a WAF-off vhost that
 serves the same documents and the echo CGI, and reverse-proxies `/proxied/` to
@@ -355,8 +355,10 @@ one: a plain request is served, a phase-1 CRS deny still applies, an upstream
 response header reaches the client and a phase-3 rule on it denies (mod_proxy
 puts upstream headers in `headers_out` before `CORAZA_OUT` runs), the request
 body consumed by fixups is replayed to the proxy and reaches the backend, and
-a phase-4 rule on the proxied body denies with the custom error page. Followed
-by a crash sweep. Interim 100/103 statuses still need a raw upstream and remain
+a phase-4 rule on the proxied body denies with the custom error page, and a
+paced 4 MiB download held by the header delay arrives byte-exact (transient
+mod_proxy buckets kept across many filter invocations: the `ap_save_brigade()`
+fix). Followed by a crash sweep. Interim 100/103 statuses still need a raw upstream and remain
 out of reach.
 
 ### Request body replay (4 tests)
@@ -415,7 +417,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 313-test suite passes after all restarts.
+restarts (1s apart). Full 314-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init. The
 suite itself now restarts the server once, over in-flight requests (issue #53
 above).

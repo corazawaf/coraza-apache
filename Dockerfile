@@ -511,6 +511,13 @@ RUN { \
     echo '<Location "/proxied/hdr-deny">'; \
     echo '    SecRule RESPONSE_HEADERS:X-Upstream "@streq from-backend" "id:20850,phase:3,deny,status:403,log"'; \
     echo '</Location>'; \
+    echo '# A paced 4 MiB download through the proxy: application/octet-stream is'; \
+    echo '# inspected here, so the header delay holds transient mod_proxy buckets'; \
+    echo '# across many filter invocations before the 1 MiB cap flushes them. The'; \
+    echo '# client must receive every byte unchanged (the setaside fix).'; \
+    echo '<Location "/proxied/bulk-delayed">'; \
+    echo '    SecResponseBodyMimeType application/octet-stream'; \
+    echo '</Location>'; \
     echo '<Location "/proxied/upstream-blocked.html">'; \
     echo '    SecResponseBodyAccess On'; \
     echo '    SecResponseBodyMimeType text/html'; \
@@ -521,6 +528,7 @@ RUN { \
     echo '    DocumentRoot "/usr/local/apache2/htdocs"'; \
     echo '    Coraza Off'; \
     echo '    ScriptAlias "/echo" "/usr/local/apache2/cgi-bin/echo"'; \
+    echo '    ScriptAlias "/bulk-delayed" "/usr/local/apache2/cgi-bin/bulk"'; \
     echo '    Alias "/hdr-deny" "/usr/local/apache2/htdocs/index.html"'; \
     echo '    Alias "/hdr-pass" "/usr/local/apache2/htdocs/index.html"'; \
     echo '    <Location "/hdr-deny">'; \

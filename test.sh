@@ -1271,6 +1271,20 @@ check_header "Proxy: upstream header reaches the client (control)" "$URL/proxied
 check      "Proxy: phase-3 rule on an upstream header denies"     "$URL/proxied/hdr-deny"                       403
 check_post_body "Proxy: request body is replayed to the backend"  "$URL/proxied/echo" "application/x-www-form-urlencoded" "via=proxy-body-42" 200 'BODY=\[via=proxy-body-42\]'
 check_body "Proxy: phase-4 rule on the proxied body denies"       "$URL/proxied/upstream-blocked.html"          403 "PROXYBLOCK" "!"
+# A paced 4 MiB download through the proxy, held by the header delay until the
+# 1 MiB cap: the buckets are transient mod_proxy buckets kept across many
+# filter invocations, exactly what the setaside fix is for. Every byte must
+# arrive, and every byte must be the 'A' the bulk CGI sends.
+bulk_out=$(mktemp)
+bulk_code=$(curl -s --max-time 30 -o "$bulk_out" -w '%{http_code}' "$URL/proxied/bulk-delayed" 2>/dev/null)
+bulk_size=$(wc -c < "$bulk_out"); bulk_bad=$(tr -d 'A' < "$bulk_out" | wc -c); rm -f "$bulk_out"
+if [ "$bulk_code" = 200 ] && [ "$bulk_size" = 4194304 ] && [ "$bulk_bad" = 0 ]; then
+    printf "  PASS  Proxy: delayed 4 MiB download arrives byte-exact -> 200 (%s bytes, all 'A')\n" "$bulk_size"
+    PASS=$((PASS + 1))
+else
+    printf "  FAIL  Proxy: delayed 4 MiB download -> %s, %s bytes, %s non-'A' bytes (expected 200, 4194304, 0)\n" "$bulk_code" "$bulk_size" "$bulk_bad"
+    FAIL=$((FAIL + 1))
+fi
 check_no_crash "Proxied backend through mod_proxy (issue #55)"
 echo ""
 

@@ -23,6 +23,10 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # The job runs the pull request's test.sh; it never pushes, so the
+          # checkout token has no business staying on disk.
+          persist-credentials: false
 
       - name: Build sanitizer image
         run: |
@@ -32,8 +36,10 @@ jobs:
             -t coraza-apache-asan .
 
       - name: Start Apache container
+        # No --rm: the log gate below must still be able to read the log if
+        # httpd died between the suite's last crash sweep and the gate.
         run: |
-          docker run --rm -d --name coraza-apache-asan -p 8888:80 coraza-apache-asan
+          docker run -d --name coraza-apache-asan -p 8888:80 coraza-apache-asan
 
       - name: Wait for Apache to be ready
         run: |
@@ -51,11 +57,14 @@ jobs:
 
       - name: Sanitizer log gate
         run: |
-          if docker logs coraza-apache-asan 2>&1 | grep -E 'AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:' ; then
+          if ! log=$(docker logs coraza-apache-asan 2>&1); then
+            echo "cannot read the container log; the gate would be vacuous"; exit 1
+          fi
+          if printf '%s\n' "$log" | grep -E 'AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:' ; then
             echo "sanitizer reports found in the container log"; exit 1
           fi
-          echo "no sanitizer report in the container log"
+          echo "no sanitizer report in the container log ($(printf '%s\n' "$log" | wc -l) lines read)"
 
       - name: Stop container
         if: always()
-        run: docker stop coraza-apache-asan || true
+        run: docker rm -f coraza-apache-asan || true
