@@ -384,6 +384,17 @@ must echo the full body with the right `Content-Length`; the header rule must
 still fire, proving phase 2 ran. `/echo-bodyon` has the same body rule with
 access on, as the control that the rule works. Followed by a crash sweep.
 
+## Running under sanitizers
+
+`docker build --build-arg SANITIZE=1` builds the module with ASan + UBSan
+(`make SANITIZE=1`) and makes the image's entrypoint preload the sanitizer
+runtime into httpd, with leak detection off and reports on stderr. The full
+suite then runs unchanged: its crash sweep fails on any sanitizer line in the
+container log, and the `A/UBSan` workflow (`.github/workflows/sanitizer.yml`)
+does exactly that on every push and pull request, then greps the whole log
+once more. This is what makes double-cleanup bugs on cancellation and reload
+reproducible here (issue #55).
+
 ## Apache Config Under Test
 
 The Docker image configures:

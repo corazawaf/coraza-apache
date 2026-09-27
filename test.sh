@@ -716,6 +716,9 @@ check_size() {
 # Validate a configuration with httpd -t inside the container. The config is
 # the image's own httpd.conf minus the include that carries the rules, plus
 # whatever directives the test appends, so each case is exactly one delta.
+# httpd invoked inside the container goes through the image's entrypoint, so a
+# SANITIZE=1 image gets its sanitizer runtime preloaded for these too (ASan
+# refuses to start otherwise); on a plain image the entrypoint is a no-op.
 check_config_validation() {
     desc="$1"
     extra="$2"
@@ -725,7 +728,7 @@ check_config_validation() {
     out=$(docker exec "$CONTAINER" sh -c '
         grep -v "conf/extra/coraza.conf" /usr/local/apache2/conf/httpd.conf > /tmp/validate.conf
         printf "LoadModule coraza_module modules/mod_coraza.so\n%s\n" "$1" >> /tmp/validate.conf
-        httpd -t -f /tmp/validate.conf 2>&1; echo "rc=$?"' sh "$extra" 2>&1)
+        /usr/local/bin/coraza-entrypoint.sh httpd -t -f /tmp/validate.conf 2>&1; echo "rc=$?"' sh "$extra" 2>&1)
     rc=$(printf '%s\n' "$out" | sed -n 's/^rc=//p' | tail -1)
 
     if [ "$rc" = "$expected_rc" ] && printf '%s\n' "$out" | grep -q "$pattern"; then
@@ -1325,7 +1328,7 @@ if [ -n "$CONTAINER" ]; then
     curl -sN --max-time 8 -o /dev/null "$URL/sse-stream" 2>/dev/null & sse_pid=$!
     curl -s  --max-time 8 -o /dev/null "$URL/bulk-delayed" 2>/dev/null & bulk_pid=$!
     sleep 0.5
-    if docker exec "$CONTAINER" httpd -k graceful >/dev/null 2>&1; then
+    if docker exec "$CONTAINER" /usr/local/bin/coraza-entrypoint.sh httpd -k graceful >/dev/null 2>&1; then
         printf "  PASS  Graceful: httpd -k graceful accepted\n"
         PASS=$((PASS + 1))
     else

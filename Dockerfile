@@ -44,9 +44,12 @@ RUN set -eux; \
 
 COPY . /usr/src/coraza-apache
 
+# SANITIZE=1 builds the module with ASan + UBSan (see the Makefile) and makes
+# the runtime stage preload the sanitizer runtime into httpd (issue #55).
+ARG SANITIZE=0
 RUN set -eux; \
     cd /usr/src/coraza-apache; \
-    make; \
+    if [ "$SANITIZE" = "1" ]; then make SANITIZE=1; else make; fi; \
     cp src/.libs/mod_coraza.so /usr/local/apache2/modules/
 
 ## Stage 3: Runtime
@@ -56,6 +59,19 @@ COPY --from=apache-build /usr/local/apache2/modules/mod_coraza.so /usr/local/apa
 COPY --from=go-builder /usr/local/lib/libcoraza.so /usr/local/lib/
 
 RUN ldconfig -v
+
+# Sanitizer runtime for a SANITIZE=1 build: the module is instrumented, httpd
+# is not, so libasan is preloaded into the server by the entrypoint below.
+ARG SANITIZE=0
+ENV CORAZA_SANITIZE=$SANITIZE
+RUN set -eux; \
+    if [ "$SANITIZE" = "1" ]; then \
+      apt-get update -qq; \
+      apt-get install -qq --no-install-recommends libasan8 libubsan1; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+COPY tests/coraza-entrypoint.sh /usr/local/bin/coraza-entrypoint.sh
+RUN chmod +x /usr/local/bin/coraza-entrypoint.sh
 
 # Switch MPM if requested (default: event)
 ARG MPM=event
@@ -556,9 +572,11 @@ RUN { \
     } > /usr/local/apache2/conf/extra/coraza.conf && \
     echo "Include conf/extra/coraza.conf" >> /usr/local/apache2/conf/httpd.conf
 
-# Verify config
-RUN httpd -t 2>&1 && echo "Config syntax OK"
+# Verify config. Through the entrypoint so a SANITIZE=1 build gets the
+# sanitizer runtime preloaded here too (ASan refuses to start otherwise).
+RUN /usr/local/bin/coraza-entrypoint.sh httpd -t 2>&1 && echo "Config syntax OK"
 
 EXPOSE 80
 
+ENTRYPOINT ["/usr/local/bin/coraza-entrypoint.sh"]
 CMD ["httpd-foreground"]
