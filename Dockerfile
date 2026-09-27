@@ -196,6 +196,15 @@ RUN { \
     echo '    SecRule ARGS:target "@streq redirect" "id:20702,phase:1,status:301,log,redirect:http://www.coraza.io"'; \
     echo '</Location>'; \
     echo '# Clean path+query target: sanitizer must pass it byte-for-byte (no over-truncation)'; \
+    echo '# --- Redirect target sanitisation (issue #54): a raw CR and a raw DEL in'; \
+    echo '# the target. The connector truncates Location at the first C0 control'; \
+    echo '# or DEL byte and logs a warning. Bytes written with printf below.'; \
+    echo '<Location "/redirect-cr">'; \
+    printf '    SecRule ARGS:target "@streq redirect" "id:20704,phase:1,status:302,log,redirect:http://example.org/a\rb"\n'; \
+    echo '</Location>'; \
+    echo '<Location "/redirect-del">'; \
+    printf '    SecRule ARGS:target "@streq redirect" "id:20705,phase:1,status:302,log,redirect:http://example.org/a\177b"\n'; \
+    echo '</Location>'; \
     echo '<Location "/redirect-clean-path">'; \
     echo '    SecRule ARGS:target "@streq redirect" "id:20703,phase:1,status:302,log,redirect:http://example.org/clean/path?a=b"'; \
     echo '</Location>'; \

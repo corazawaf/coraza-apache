@@ -1022,6 +1022,13 @@ echo "--- Response header guards ---"
 check_head   "HEAD /: not delayed, returns 200"          "$URL/"                              200
 check_header "Redirect: Location is exactly the target"  "$URL/redirect-302?target=redirect"  "Location" "http://www.coraza.io"
 check_header "Redirect: clean path+query preserved"      "$URL/redirect-clean-path?target=redirect" "Location" "http://example.org/clean/path?a=b"
+# A raw CR or DEL byte in the redirect target (issue #54): 302, exactly one
+# Location header, its value cut at the offending byte. check_header counts
+# the header, so a split into two Location lines would fail on the count.
+check_redirect "Redirect: bare CR in target is cut, status kept"  "$URL/redirect-cr?target=redirect"  302 "http://example.org/a"
+check_header   "Redirect: bare CR in target, one Location header"  "$URL/redirect-cr?target=redirect"  "Location" "http://example.org/a"
+check_redirect "Redirect: DEL in target is cut, status kept"      "$URL/redirect-del?target=redirect" 302 "http://example.org/a"
+check_header   "Redirect: DEL in target, one Location header"      "$URL/redirect-del?target=redirect" "Location" "http://example.org/a"
 check_header "Clean response: no smuggled Set-Cookie"    "$URL/"                              "Set-Cookie" "" "!"
 check_no_crash "Response header guards"
 echo ""
@@ -1088,6 +1095,10 @@ check_no_crash "SecRequestBodyAccess Off body path (issue #44)"
 echo ""
 
 if [ -n "$CONTAINER" ]; then
+    echo "--- Redirect target sanitisation is logged (issue #54) ---"
+    check_container_log "Redirect: control byte in target logged as a warning" "control character in redirect target"
+    echo ""
+
     echo "--- Config validation: ruleless \"Coraza On\" is rejected (issue #39) ---"
     # "Coraza On" with no rule directive anywhere must fail httpd -t rather
     # than start an empty WAF; one rule anywhere makes it pass, and "Coraza

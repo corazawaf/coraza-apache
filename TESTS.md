@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **273 tests** against a Docker
+The integration test suite (`test.sh`) runs **278 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (273 tests, event MPM)
+# Full suite (278 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (185 tests, no audit/debug log checks, no MPM verification)
+# Minimal (189 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+87 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+88 tests) |
 
 ## Test Categories
 
@@ -99,6 +99,16 @@ Clean requests return 405 (WAF passes, Apache rejects method).
 
 Custom `deny,status:401` rules. Verifies CRS rules still return 403
 while custom rules return their configured status.
+
+### Redirect interventions and response header guards (12 tests)
+
+`redirect:` rules with `status:301` / `302`: status and `Location` are exactly
+the configured target, a clean path and query survive, and no header can be
+smuggled into a clean response. Issue #54 adds a target carrying a raw CR and
+one carrying a raw DEL byte (written into the config with `printf`): the
+connector truncates `Location` at the first C0 control or DEL byte, so each
+answers 302 with exactly one `Location` cut to `http://example.org/a`, and
+logs a warning (checked in the container log, +1 test with `--container`).
 
 ### Location Rule Isolation (6 tests)
 
@@ -342,9 +352,5 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 273-test suite passes after all restarts.
+restarts (1s apart). Full 278-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init.
-
-## What's Not Covered
-
-- Redirect interventions (`intervention->url` not available in libcoraza)
