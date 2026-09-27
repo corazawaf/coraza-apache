@@ -1257,6 +1257,20 @@ echo ""
 # --- Request body reaches the handler (issue #34) ---
 # The fixups hook consumes the body to inspect it; CORAZA_IN must replay the
 # copy to the handler. The echo CGI reports what it actually received.
+echo "--- Proxied backend through mod_proxy (issue #55) ---"
+# /proxied/ is reverse-proxied to a WAF-off vhost in the same httpd. The
+# module must inspect the proxied exchange like a local one: phase 1 on the
+# request, the fixups-consumed body replayed to the proxy, upstream response
+# headers seen by phase 3, the proxied body by phase 4.
+check      "Proxy: plain request is served by the backend"         "$URL/proxied/"                              200
+check      "Proxy: phase-1 deny still applies on the proxied path" "$URL/proxied/?id=1%20OR%201=1"              403
+check_header "Proxy: upstream header reaches the client (control)" "$URL/proxied/hdr-pass" "X-Upstream" "from-backend"
+check      "Proxy: phase-3 rule on an upstream header denies"     "$URL/proxied/hdr-deny"                       403
+check_post_body "Proxy: request body is replayed to the backend"  "$URL/proxied/echo" "application/x-www-form-urlencoded" "via=proxy-body-42" 200 'BODY=\[via=proxy-body-42\]'
+check_body "Proxy: phase-4 rule on the proxied body denies"       "$URL/proxied/upstream-blocked.html"          403 "PROXYBLOCK" "!"
+check_no_crash "Proxied backend through mod_proxy (issue #55)"
+echo ""
+
 echo "--- Request body reaches the handler (issue #34) ---"
 check_post_body "POST JSON body is delivered to the handler" \
     "$URL/echo" "application/json" '{"body": "hello"}' 200 'BODY=\[{"body": "hello"}\]'

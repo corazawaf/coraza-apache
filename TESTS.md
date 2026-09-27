@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **306 tests** against a Docker
+The integration test suite (`test.sh`) runs **313 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (306 tests, event MPM)
+# Full suite (313 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (208 tests, no audit/debug log checks, no MPM verification)
+# Minimal (214 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test). The HTTP/2 section is not flag-driven: it probes h2c and skips itself on a server that does not negotiate it, so a prefork image (no mod_http2) reports 8 tests fewer |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+97 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+98 tests) |
 
 ## Test Categories
 
@@ -286,7 +286,7 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
-### Crash and worker-health sweep (49 tests: 48 sweeps + 1 self-test, requires `--container`)
+### Crash and worker-health sweep (50 tests: 49 sweeps + 1 self-test, requires `--container`)
 
 Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
 that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
@@ -346,6 +346,19 @@ Companion to the delayed-response cap tests above: the container log must
 carry the "flushing headers early" line when the 4 MiB body crosses
 `CORAZA_MAX_DELAYED_BODY`.
 
+### Proxied backend through mod_proxy (6 tests)
+
+Issue #55. The image listens on a second port (8081) with a WAF-off vhost that
+serves the same documents and the echo CGI, and reverse-proxies `/proxied/` to
+it with `mod_proxy_http`. The proxied exchange must be inspected like a local
+one: a plain request is served, a phase-1 CRS deny still applies, an upstream
+response header reaches the client and a phase-3 rule on it denies (mod_proxy
+puts upstream headers in `headers_out` before `CORAZA_OUT` runs), the request
+body consumed by fixups is replayed to the proxy and reaches the backend, and
+a phase-4 rule on the proxied body denies with the custom error page. Followed
+by a crash sweep. Interim 100/103 statuses still need a raw upstream and remain
+out of reach.
+
 ### Request body replay (4 tests)
 
 The fixups hook reads the request body with `ap_get_client_block()` to inspect
@@ -391,7 +404,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 306-test suite passes after all restarts.
+restarts (1s apart). Full 313-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init. The
 suite itself now restarts the server once, over in-flight requests (issue #53
 above).
