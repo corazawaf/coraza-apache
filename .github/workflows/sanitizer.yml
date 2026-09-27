@@ -1,0 +1,70 @@
+name: A/UBSan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+# The module built with ASan + UBSan, the sanitizer runtime preloaded into
+# httpd, and the whole integration suite run against it (event MPM; mod_http2
+# and the streaming fixtures need it). The suite's crash sweep already fails
+# on any AddressSanitizer / UndefinedBehaviorSanitizer line in the container
+# log; a final grep gates the whole log once more so nothing between two
+# sweeps slips through (issue #55).
+jobs:
+  sanitizer:
+    permissions:
+      contents: read
+    name: A/UBSan build and full suite (event MPM)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # The job runs the pull request's test.sh; it never pushes, so the
+          # checkout token has no business staying on disk.
+          persist-credentials: false
+
+      - name: Build sanitizer image
+        run: |
+          docker build --no-cache \
+            --build-arg MPM=event \
+            --build-arg SANITIZE=1 \
+            -t coraza-apache-asan .
+
+      - name: Start Apache container
+        # No --rm: the log gate below must still be able to read the log if
+        # httpd died between the suite's last crash sweep and the gate.
+        run: |
+          docker run -d --name coraza-apache-asan -p 8888:80 coraza-apache-asan
+
+      - name: Wait for Apache to be ready
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8888/ > /dev/null 2>&1; then
+              echo "Apache is ready"; break
+            fi
+            echo "Waiting for Apache... ($i/60)"; sleep 1
+          done
+          curl -sf http://localhost:8888/ > /dev/null
+
+      - name: Run integration tests under the sanitizers
+        run: |
+          ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-asan
+
+      - name: Sanitizer log gate
+        run: |
+          if ! log=$(docker logs coraza-apache-asan 2>&1); then
+            echo "cannot read the container log; the gate would be vacuous"; exit 1
+          fi
+          if printf '%s\n' "$log" | grep -E 'AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:' ; then
+            echo "sanitizer reports found in the container log"; exit 1
+          fi
+          echo "no sanitizer report in the container log ($(printf '%s\n' "$log" | wc -l) lines read)"
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f coraza-apache-asan || true

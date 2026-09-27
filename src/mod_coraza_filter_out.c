@@ -475,9 +475,23 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
     /* Not the last buffer yet */
     if (ctx->headers_delayed) {
-        /* Accumulate into pending brigade during header delay. The total is
-         * bounded by the per-bucket cap check in the phase-4 loop above. */
-        APR_BRIGADE_CONCAT(ctx->pending_brigade, bb);
+        /*
+         * Accumulate into the pending brigade during the header delay. The
+         * total is bounded by CORAZA_MAX_DELAYED_BODY above. The buckets are
+         * kept across filter invocations, so they must be set aside: a
+         * handler that streams from a connection -- mod_proxy -- hands us
+         * transient buckets whose memory is reused as soon as we return, and
+         * holding them as-is released a proxied response with chunks of a
+         * later read spliced in (issue #55). ap_save_brigade() copies what
+         * needs copying into the request pool and leaves file/heap buckets
+         * alone.
+         */
+        if (ap_save_brigade(f, &ctx->pending_brigade, &bb, r->pool)
+                != APR_SUCCESS) {
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                          "coraza: cannot set aside the delayed response body");
+            return coraza_fail_closed_response(f, r, ctx, bb);
+        }
         return APR_SUCCESS;
     }
 

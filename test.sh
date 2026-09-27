@@ -716,6 +716,9 @@ check_size() {
 # Validate a configuration with httpd -t inside the container. The config is
 # the image's own httpd.conf minus the include that carries the rules, plus
 # whatever directives the test appends, so each case is exactly one delta.
+# httpd invoked inside the container goes through the image's entrypoint, so a
+# SANITIZE=1 image gets its sanitizer runtime preloaded for these too (ASan
+# refuses to start otherwise); on a plain image the entrypoint is a no-op.
 check_config_validation() {
     desc="$1"
     extra="$2"
@@ -725,7 +728,7 @@ check_config_validation() {
     out=$(docker exec "$CONTAINER" sh -c '
         grep -v "conf/extra/coraza.conf" /usr/local/apache2/conf/httpd.conf > /tmp/validate.conf
         printf "LoadModule coraza_module modules/mod_coraza.so\n%s\n" "$1" >> /tmp/validate.conf
-        httpd -t -f /tmp/validate.conf 2>&1; echo "rc=$?"' sh "$extra" 2>&1)
+        /usr/local/bin/coraza-entrypoint.sh httpd -t -f /tmp/validate.conf 2>&1; echo "rc=$?"' sh "$extra" 2>&1)
     rc=$(printf '%s\n' "$out" | sed -n 's/^rc=//p' | tail -1)
 
     if [ "$rc" = "$expected_rc" ] && printf '%s\n' "$out" | grep -q "$pattern"; then
@@ -1257,6 +1260,34 @@ echo ""
 # --- Request body reaches the handler (issue #34) ---
 # The fixups hook consumes the body to inspect it; CORAZA_IN must replay the
 # copy to the handler. The echo CGI reports what it actually received.
+echo "--- Proxied backend through mod_proxy (issue #55) ---"
+# /proxied/ is reverse-proxied to a WAF-off vhost in the same httpd. The
+# module must inspect the proxied exchange like a local one: phase 1 on the
+# request, the fixups-consumed body replayed to the proxy, upstream response
+# headers seen by phase 3, the proxied body by phase 4.
+check      "Proxy: plain request is served by the backend"         "$URL/proxied/"                              200
+check      "Proxy: phase-1 deny still applies on the proxied path" "$URL/proxied/?id=1%20OR%201=1"              403
+check_header "Proxy: upstream header reaches the client (control)" "$URL/proxied/hdr-pass" "X-Upstream" "from-backend"
+check      "Proxy: phase-3 rule on an upstream header denies"     "$URL/proxied/hdr-deny"                       403
+check_post_body "Proxy: request body is replayed to the backend"  "$URL/proxied/echo" "application/x-www-form-urlencoded" "via=proxy-body-42" 200 'BODY=\[via=proxy-body-42\]'
+check_body "Proxy: phase-4 rule on the proxied body denies"       "$URL/proxied/upstream-blocked.html"          403 "PROXYBLOCK" "!"
+# A paced 4 MiB download through the proxy, held by the header delay until the
+# 1 MiB cap: the buckets are transient mod_proxy buckets kept across many
+# filter invocations, exactly what the setaside fix is for. Every byte must
+# arrive, and every byte must be the 'A' the bulk CGI sends.
+bulk_out=$(mktemp)
+bulk_code=$(curl -s --max-time 30 -o "$bulk_out" -w '%{http_code}' "$URL/proxied/bulk-delayed" 2>/dev/null)
+bulk_size=$(wc -c < "$bulk_out"); bulk_bad=$(tr -d 'A' < "$bulk_out" | wc -c); rm -f "$bulk_out"
+if [ "$bulk_code" = 200 ] && [ "$bulk_size" = 4194304 ] && [ "$bulk_bad" = 0 ]; then
+    printf "  PASS  Proxy: delayed 4 MiB download arrives byte-exact -> 200 (%s bytes, all 'A')\n" "$bulk_size"
+    PASS=$((PASS + 1))
+else
+    printf "  FAIL  Proxy: delayed 4 MiB download -> %s, %s bytes, %s non-'A' bytes (expected 200, 4194304, 0)\n" "$bulk_code" "$bulk_size" "$bulk_bad"
+    FAIL=$((FAIL + 1))
+fi
+check_no_crash "Proxied backend through mod_proxy (issue #55)"
+echo ""
+
 echo "--- Request body reaches the handler (issue #34) ---"
 check_post_body "POST JSON body is delivered to the handler" \
     "$URL/echo" "application/json" '{"body": "hello"}' 200 'BODY=\[{"body": "hello"}\]'
@@ -1311,7 +1342,7 @@ if [ -n "$CONTAINER" ]; then
     curl -sN --max-time 8 -o /dev/null "$URL/sse-stream" 2>/dev/null & sse_pid=$!
     curl -s  --max-time 8 -o /dev/null "$URL/bulk-delayed" 2>/dev/null & bulk_pid=$!
     sleep 0.5
-    if docker exec "$CONTAINER" httpd -k graceful >/dev/null 2>&1; then
+    if docker exec "$CONTAINER" /usr/local/bin/coraza-entrypoint.sh httpd -k graceful >/dev/null 2>&1; then
         printf "  PASS  Graceful: httpd -k graceful accepted\n"
         PASS=$((PASS + 1))
     else

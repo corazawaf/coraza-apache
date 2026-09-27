@@ -44,9 +44,12 @@ RUN set -eux; \
 
 COPY . /usr/src/coraza-apache
 
+# SANITIZE=1 builds the module with ASan + UBSan (see the Makefile) and makes
+# the runtime stage preload the sanitizer runtime into httpd (issue #55).
+ARG SANITIZE=0
 RUN set -eux; \
     cd /usr/src/coraza-apache; \
-    make; \
+    if [ "$SANITIZE" = "1" ]; then make SANITIZE=1; else make; fi; \
     cp src/.libs/mod_coraza.so /usr/local/apache2/modules/
 
 ## Stage 3: Runtime
@@ -56,6 +59,19 @@ COPY --from=apache-build /usr/local/apache2/modules/mod_coraza.so /usr/local/apa
 COPY --from=go-builder /usr/local/lib/libcoraza.so /usr/local/lib/
 
 RUN ldconfig -v
+
+# Sanitizer runtime for a SANITIZE=1 build: the module is instrumented, httpd
+# is not, so libasan is preloaded into the server by the entrypoint below.
+ARG SANITIZE=0
+ENV CORAZA_SANITIZE=$SANITIZE
+RUN set -eux; \
+    if [ "$SANITIZE" = "1" ]; then \
+      apt-get update -qq; \
+      apt-get install -qq --no-install-recommends libasan8 libubsan1; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+COPY tests/coraza-entrypoint.sh /usr/local/bin/coraza-entrypoint.sh
+RUN chmod +x /usr/local/bin/coraza-entrypoint.sh
 
 # Switch MPM if requested (default: event)
 ARG MPM=event
@@ -103,6 +119,7 @@ RUN mkdir -p /var/log/coraza && \
     echo "OK" > /usr/local/apache2/htdocs/htaccess-disabled/index.html && \
     printf 'Coraza Off\n' \
         > /usr/local/apache2/htdocs/htaccess-disabled/.htaccess && \
+    echo "<html><body>PROXYBLOCK</body></html>" > /usr/local/apache2/htdocs/upstream-blocked.html && \
     # Two .htaccess policies whose rule text collides under the WAF cache's
     # DJB2 hash (h = h*33 + c: "xb" and "yA" hash alike, same length, same
     # rule count) but differ in behaviour. The cache must tell them apart
@@ -135,6 +152,8 @@ RUN chmod +x /usr/local/apache2/cgi-bin/status
 RUN { \
     echo 'LoadModule coraza_module modules/mod_coraza.so'; \
     echo 'LoadModule info_module modules/mod_info.so'; \
+    echo 'LoadModule proxy_module modules/mod_proxy.so'; \
+    echo 'LoadModule proxy_http_module modules/mod_proxy_http.so'; \
     if [ "$MPM" = "prefork" ]; then \
       echo 'LoadModule cgi_module modules/mod_cgi.so'; \
     else \
@@ -481,6 +500,44 @@ RUN { \
     echo '    CorazaTransactionId "TESTID-APACHE-001"'; \
     echo '    SecRule ARGS:action "@streq block" "id:20301,phase:1,deny,status:403,log"'; \
     echo '</Location>'; \
+    echo '# --- Proxied backend (issue #55): a second listener in the same httpd,'; \
+    echo '# WAF off, is the upstream of a mod_proxy_http reverse proxy under'; \
+    echo '# /proxied/. Upstream response headers land in r->headers_out before'; \
+    echo '# CORAZA_OUT runs, so phase 3 sees them; the request body consumed by'; \
+    echo '# fixups must be replayed to the proxy; phase 4 inspects the proxied body.'; \
+    echo 'Listen 8081'; \
+    echo 'ProxyPass "/proxied/" "http://127.0.0.1:8081/"'; \
+    echo 'ProxyPassReverse "/proxied/" "http://127.0.0.1:8081/"'; \
+    echo '<Location "/proxied/hdr-deny">'; \
+    echo '    SecRule RESPONSE_HEADERS:X-Upstream "@streq from-backend" "id:20850,phase:3,deny,status:403,log"'; \
+    echo '</Location>'; \
+    echo '# A paced 4 MiB download through the proxy: application/octet-stream is'; \
+    echo '# inspected here, so the header delay holds transient mod_proxy buckets'; \
+    echo '# across many filter invocations before the 1 MiB cap flushes them. The'; \
+    echo '# client must receive every byte unchanged (the setaside fix).'; \
+    echo '<Location "/proxied/bulk-delayed">'; \
+    echo '    SecResponseBodyMimeType application/octet-stream'; \
+    echo '</Location>'; \
+    echo '<Location "/proxied/upstream-blocked.html">'; \
+    echo '    SecResponseBodyAccess On'; \
+    echo '    SecResponseBodyMimeType text/html'; \
+    echo '    SecRule RESPONSE_BODY "@contains PROXYBLOCK" "id:20851,phase:4,deny,status:403,log"'; \
+    echo '</Location>'; \
+    echo '<VirtualHost *:8081>'; \
+    echo '    ServerName upstream.test'; \
+    echo '    DocumentRoot "/usr/local/apache2/htdocs"'; \
+    echo '    Coraza Off'; \
+    echo '    ScriptAlias "/echo" "/usr/local/apache2/cgi-bin/echo"'; \
+    echo '    ScriptAlias "/bulk-delayed" "/usr/local/apache2/cgi-bin/bulk"'; \
+    echo '    Alias "/hdr-deny" "/usr/local/apache2/htdocs/index.html"'; \
+    echo '    Alias "/hdr-pass" "/usr/local/apache2/htdocs/index.html"'; \
+    echo '    <Location "/hdr-deny">'; \
+    echo '        Header set X-Upstream "from-backend"'; \
+    echo '    </Location>'; \
+    echo '    <Location "/hdr-pass">'; \
+    echo '        Header set X-Upstream "from-backend"'; \
+    echo '    </Location>'; \
+    echo '</VirtualHost>'; \
     echo '# --- VirtualHost isolation ---'; \
     echo '# Default VHost for localhost — inherits server-level config'; \
     echo '<VirtualHost *:80>'; \
@@ -523,9 +580,11 @@ RUN { \
     } > /usr/local/apache2/conf/extra/coraza.conf && \
     echo "Include conf/extra/coraza.conf" >> /usr/local/apache2/conf/httpd.conf
 
-# Verify config
-RUN httpd -t 2>&1 && echo "Config syntax OK"
+# Verify config. Through the entrypoint so a SANITIZE=1 build gets the
+# sanitizer runtime preloaded here too (ASan refuses to start otherwise).
+RUN /usr/local/bin/coraza-entrypoint.sh httpd -t 2>&1 && echo "Config syntax OK"
 
 EXPOSE 80
 
+ENTRYPOINT ["/usr/local/bin/coraza-entrypoint.sh"]
 CMD ["httpd-foreground"]

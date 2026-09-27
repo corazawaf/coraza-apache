@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **306 tests** against a Docker
+The integration test suite (`test.sh`) runs **314 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (306 tests, event MPM)
+# Full suite (314 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (208 tests, no audit/debug log checks, no MPM verification)
+# Minimal (215 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test). The HTTP/2 section is not flag-driven: it probes h2c and skips itself on a server that does not negotiate it, so a prefork image (no mod_http2) reports 8 tests fewer |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+97 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+98 tests) |
 
 ## Test Categories
 
@@ -286,7 +286,7 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
-### Crash and worker-health sweep (49 tests: 48 sweeps + 1 self-test, requires `--container`)
+### Crash and worker-health sweep (50 tests: 49 sweeps + 1 self-test, requires `--container`)
 
 Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
 that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
@@ -346,6 +346,21 @@ Companion to the delayed-response cap tests above: the container log must
 carry the "flushing headers early" line when the 4 MiB body crosses
 `CORAZA_MAX_DELAYED_BODY`.
 
+### Proxied backend through mod_proxy (7 tests)
+
+Issue #55. The image listens on a second port (8081) with a WAF-off vhost that
+serves the same documents and the echo CGI, and reverse-proxies `/proxied/` to
+it with `mod_proxy_http`. The proxied exchange must be inspected like a local
+one: a plain request is served, a phase-1 CRS deny still applies, an upstream
+response header reaches the client and a phase-3 rule on it denies (mod_proxy
+puts upstream headers in `headers_out` before `CORAZA_OUT` runs), the request
+body consumed by fixups is replayed to the proxy and reaches the backend, and
+a phase-4 rule on the proxied body denies with the custom error page, and a
+paced 4 MiB download held by the header delay arrives byte-exact (transient
+mod_proxy buckets kept across many filter invocations: the `ap_save_brigade()`
+fix). Followed by a crash sweep. Interim 100/103 statuses still need a raw upstream and remain
+out of reach.
+
 ### Request body replay (4 tests)
 
 The fixups hook reads the request body with `ap_get_client_block()` to inspect
@@ -371,6 +386,17 @@ must echo the full body with the right `Content-Length`; the header rule must
 still fire, proving phase 2 ran. `/echo-bodyon` has the same body rule with
 access on, as the control that the rule works. Followed by a crash sweep.
 
+## Running under sanitizers
+
+`docker build --build-arg SANITIZE=1` builds the module with ASan + UBSan
+(`make SANITIZE=1`) and makes the image's entrypoint preload the sanitizer
+runtime into httpd, with leak detection off and reports on stderr. The full
+suite then runs unchanged: its crash sweep fails on any sanitizer line in the
+container log, and the `A/UBSan` workflow (`.github/workflows/sanitizer.yml`)
+does exactly that on every push and pull request, then greps the whole log
+once more. This is what makes double-cleanup bugs on cancellation and reload
+reproducible here (issue #55).
+
 ## Apache Config Under Test
 
 The Docker image configures:
@@ -391,7 +417,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 306-test suite passes after all restarts.
+restarts (1s apart). Full 314-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init. The
 suite itself now restarts the server once, over in-flight requests (issue #53
 above).
