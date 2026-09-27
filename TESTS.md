@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **287 tests** against a Docker
+The integration test suite (`test.sh`) runs **295 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (287 tests, event MPM)
+# Full suite (295 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (197 tests, no audit/debug log checks, no MPM verification)
+# Minimal (199 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+89 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+95 tests) |
 
 ## Test Categories
 
@@ -197,6 +197,16 @@ and only status, never an interim 100 (the deny runs before any body read).
 After each exchange a plain `GET /` must answer 200; a crash sweep closes the
 section.
 
+### In-flight cancellation and graceful restart (2 + 4 tests, 4 require `--container`)
+
+Issue #53. A client announces a 100000-byte body, sends 10 bytes and hangs up
+while fixups is mid-read; another aborts a delayed 4 MiB response one second
+in, while the output filter still holds it. After each, `GET /` must answer
+200. With `--container`, an SSE stream and a delayed download are in flight
+when `httpd -k graceful` runs: each must complete or be cut cleanly (curl exit
+0, or 28 on its own cap, never a reset), the new workers must answer 200 and
+still enforce a phase-1 rule. Each half ends with a crash sweep.
+
 ### Config validation (12 tests, requires `--container`)
 
 `httpd -t` inside the container on the image's own `httpd.conf` minus the rules
@@ -262,7 +272,7 @@ Locations (`/auditlog-sub1/sub2`). Verifies:
 - Nested Locations inherit parent rules (requests appear in child's log)
 - `ctl:auditLogParts=+E` adds the E section to the audit log
 
-### Crash and worker-health sweep (46 tests: 45 sweeps + 1 self-test, requires `--container`)
+### Crash and worker-health sweep (48 tests: 47 sweeps + 1 self-test, requires `--container`)
 
 Apache logs to the container's stderr (`ErrorLog /proc/self/fd/2`), so a worker
 that dies during a test leaves an `AH00052: child pid N exit signal ...` line in
@@ -366,5 +376,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 287-test suite passes after all restarts.
-Old workers clean up WAFs on exit, new workers rebuild via child_init.
+restarts (1s apart). Full 295-test suite passes after all restarts.
+Old workers clean up WAFs on exit, new workers rebuild via child_init. The
+suite itself now restarts the server once, over in-flight requests (issue #53
+above).

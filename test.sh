@@ -470,6 +470,24 @@ raw_exchange() {
     fi | tr -d '\r' | grep -E '^HTTP/1\.[01] [0-9][0-9][0-9]' | awk '{printf "%s ", $2}' | sed 's/ $//'
 }
 
+# Send a payload and hang up right after it (a client aborting mid-request),
+# draining whatever comes back for at most 5 s. Output is discarded: the
+# assertion is that the server is still healthy afterwards.
+raw_abort() {
+    payload="$1"
+    hostport=${URL#http://}
+    hostport=${hostport%%/*}
+    host=${hostport%%:*}
+    port=${hostport##*:}
+    [ "$host" = "$port" ] && port=80
+
+    if command -v nc >/dev/null 2>&1; then
+        printf '%b' "$payload" | nc -N -w 5 "$host" "$port" >/dev/null 2>&1
+    elif command -v bash >/dev/null 2>&1; then
+        bash -c 'exec 3<>"/dev/tcp/$1/$2"; printf "%b" "$3" >&3; exec 3>&-' _ "$host" "$port" "$payload" 2>/dev/null
+    fi
+}
+
 # Assert the sequence of status codes a raw exchange yields.
 check_raw_exchange() {
     desc="$1"
@@ -896,6 +914,18 @@ check "Expect: server still answers"                   "$URL/" 200
 check_no_crash "Raw-socket robustness (issue #50)"
 echo ""
 
+echo "--- In-flight cancellation (issue #53) ---"
+# A client that announces a 100000-byte body, sends 10 bytes and hangs up:
+# fixups is mid-read when the socket closes. Then a client that aborts a
+# delayed 4 MiB response 1 s in, while the output filter still holds it. In
+# both cases the worker must simply move on.
+raw_abort "POST /echo HTTP/1.1\r\nHost: $H\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 100000\r\n\r\n0123456789"
+check "Client abort mid-request-body: server still answers"     "$URL/" 200
+curl -s --max-time 1 -o /dev/null "$URL/bulk-delayed" 2>/dev/null
+check "Client abort mid-delayed-response: server still answers" "$URL/" 200
+check_no_crash "In-flight cancellation (issue #53)"
+echo ""
+
 echo "--- Large header inspection (length-narrowing guard) ---"
 # A large but legal header must still reach the engine in full: the trigger sits
 # at the very end of ~6 KB of padding, so a clipped length would miss it.
@@ -1161,6 +1191,33 @@ check_no_crash "SecRequestBodyAccess Off body path (issue #44)"
 echo ""
 
 if [ -n "$CONTAINER" ]; then
+    echo "--- Graceful restart over in-flight requests (issue #53) ---"
+    # An SSE stream (never ends) and a delayed 4 MiB download are in flight
+    # when httpd -k graceful runs. Old workers must finish or cut them cleanly
+    # (curl exits 0, or 28 on its own 8 s cap, never a reset), and the new
+    # workers must be serving right after. The crash sweep closes the section.
+    curl -sN --max-time 8 -o /dev/null "$URL/sse-stream" 2>/dev/null & sse_pid=$!
+    curl -s  --max-time 8 -o /dev/null "$URL/bulk-delayed" 2>/dev/null & bulk_pid=$!
+    sleep 0.5
+    docker exec "$CONTAINER" httpd -k graceful >/dev/null 2>&1
+    wait $sse_pid;  sse_rc=$?
+    wait $bulk_pid; bulk_rc=$?
+    for rcpair in "SSE stream:$sse_rc" "delayed download:$bulk_rc"; do
+        what=${rcpair%%:*}; rc=${rcpair##*:}
+        if [ "$rc" = 0 ] || [ "$rc" = 28 ]; then
+            printf "  PASS  Graceful: %s completed or was cut cleanly (curl %s)\n" "$what" "$rc"
+            PASS=$((PASS + 1))
+        else
+            printf "  FAIL  Graceful: %s ended with curl exit %s\n" "$what" "$rc"
+            FAIL=$((FAIL + 1))
+        fi
+    done
+    i=0; while [ $i -lt 20 ] && ! curl -fs -o /dev/null "$URL/"; do sleep 0.5; i=$((i+1)); done
+    check "Graceful: new workers answer"                             "$URL/" 200
+    check "Graceful: rules still enforced after the restart"        "$URL/phase1?action=block403" 403
+    check_no_crash "Graceful restart over in-flight requests (issue #53)"
+    echo ""
+
     echo "--- Redirect target sanitisation is logged (issue #54) ---"
     check_container_log "Redirect: control byte in target logged as a warning" "control character in redirect target"
     echo ""
