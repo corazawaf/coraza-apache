@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **295 tests** against a Docker
+The integration test suite (`test.sh`) runs **298 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (295 tests, event MPM)
+# Full suite (298 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (199 tests, no audit/debug log checks, no MPM verification)
+# Minimal (201 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -27,7 +27,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 | Flag | Effect |
 |------|--------|
 | `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test) |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+95 tests) |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+96 tests) |
 
 ## Test Categories
 
@@ -197,15 +197,16 @@ and only status, never an interim 100 (the deny runs before any body read).
 After each exchange a plain `GET /` must answer 200; a crash sweep closes the
 section.
 
-### In-flight cancellation and graceful restart (2 + 4 tests, 4 require `--container`)
+### In-flight cancellation and graceful restart (4 + 5 tests, 5 require `--container`)
 
 Issue #53. A client announces a 100000-byte body, sends 10 bytes and hangs up
-while fixups is mid-read; another aborts a delayed 4 MiB response one second
-in, while the output filter still holds it. After each, `GET /` must answer
-200. With `--container`, an SSE stream and a delayed download are in flight
-when `httpd -k graceful` runs: each must complete or be cut cleanly (curl exit
-0, or 28 on its own cap, never a reset), the new workers must answer 200 and
-still enforce a phase-1 rule. Each half ends with a crash sweep.
+while fixups is mid-read (the send itself is asserted); another receives the
+200 of a delayed 4 MiB download and is cut by its own 2 s cap (curl exit 28),
+so the abort lands mid-response. After each, `GET /` must answer 200. With
+`--container`, an SSE stream and a delayed download are in flight when
+`httpd -k graceful` runs (its exit status is asserted): each must complete or
+be cut cleanly (curl exit 0, or 28 on its own cap, never a reset), the new
+workers must answer 200 and still enforce a phase-1 rule. Each half ends with a crash sweep.
 
 ### Config validation (12 tests, requires `--container`)
 
@@ -322,8 +323,9 @@ Issue #52. `/status204` and `/status304` are one CGI (`tests/cgi-bin/status`)
 answering with the status from `SetEnv STATUS_CODE`, under `text/html` so the
 header delay engages, and with a phase-4 `RESPONSE_BODY` rule armed. With no
 body, the delay must release the headers on the immediate EOS (a 5 s cap
-catches a hang) and the status must come through untouched with an empty
-body. Followed by a crash sweep.
+catches a hang) and the status must come through untouched; a raw-socket read
+checks that not one byte follows the headers (curl discards a 204/304 body by
+design, so it cannot tell). Followed by a crash sweep.
 
 ### Delayed response cap log (1 test, requires `--container`)
 
@@ -376,7 +378,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 295-test suite passes after all restarts.
+restarts (1s apart). Full 298-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init. The
 suite itself now restarts the server once, over in-flight requests (issue #53
 above).

@@ -481,10 +481,50 @@ raw_abort() {
     port=${hostport##*:}
     [ "$host" = "$port" ] && port=80
 
-    if command -v nc >/dev/null 2>&1; then
+    if command -v nc >/dev/null 2>&1 && nc -h 2>&1 | grep -q -- '-N'; then
         printf '%b' "$payload" | nc -N -w 5 "$host" "$port" >/dev/null 2>&1
     elif command -v bash >/dev/null 2>&1; then
-        bash -c 'exec 3<>"/dev/tcp/$1/$2"; printf "%b" "$3" >&3; exec 3>&-' _ "$host" "$port" "$payload" 2>/dev/null
+        bash -c 'exec 3<>"/dev/tcp/$1/$2" && printf "%b" "$3" >&3 && exec 3>&-' _ "$host" "$port" "$payload" 2>/dev/null
+    else
+        return 1
+    fi
+}
+
+# Full raw response (headers and body, CR stripped) to one GET, bounded to 5 s.
+raw_response() {
+    path="$1"
+    hostport=${URL#http://}
+    hostport=${hostport%%/*}
+    host=${hostport%%:*}
+    port=${hostport##*:}
+    [ "$host" = "$port" ] && port=80
+
+    if command -v nc >/dev/null 2>&1; then
+        printf 'GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n' "$path" "$host" | nc -w 5 "$host" "$port" 2>/dev/null
+    elif command -v bash >/dev/null 2>&1; then
+        bash -c 'exec 3<>"/dev/tcp/$1/$2"
+                 printf "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n" "$3" "$1" >&3
+                 timeout 5 cat <&3' _ "$host" "$port" "$path" 2>/dev/null
+    fi | tr -d '\r'
+}
+
+# Assert a body-less response on the wire: the expected status line and not a
+# single byte after the blank line that ends the headers. curl cannot tell,
+# it discards the body of a 204/304 by design.
+check_raw_bodyless() {
+    desc="$1"
+    path="$2"
+    expected="$3"
+
+    resp=$(raw_response "$path")
+    code=$(printf '%s\n' "$resp" | head -1 | awk '{print $2}')
+    body=$(printf '%s\n' "$resp" | awk 'blank {print} /^$/ {blank=1}')
+    if [ "$code" = "$expected" ] && [ -z "$body" ]; then
+        printf "  PASS  %s -> %s, empty body on the wire\n" "$desc" "$code"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  %s -> %s, body bytes: %s\n" "$desc" "${code:-none}" "$(printf '%s' "$body" | wc -c)"
+        FAIL=$((FAIL + 1))
     fi
 }
 
@@ -919,9 +959,25 @@ echo "--- In-flight cancellation (issue #53) ---"
 # fixups is mid-read when the socket closes. Then a client that aborts a
 # delayed 4 MiB response 1 s in, while the output filter still holds it. In
 # both cases the worker must simply move on.
-raw_abort "POST /echo HTTP/1.1\r\nHost: $H\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 100000\r\n\r\n0123456789"
+if raw_abort "POST /echo HTTP/1.1\r\nHost: $H\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 100000\r\n\r\n0123456789"; then
+    printf "  PASS  Client abort mid-request-body: partial body sent, socket closed\n"
+    PASS=$((PASS + 1))
+else
+    printf "  FAIL  Client abort mid-request-body: raw client could not send\n"
+    FAIL=$((FAIL + 1))
+fi
 check "Client abort mid-request-body: server still answers"     "$URL/" 200
-curl -s --max-time 1 -o /dev/null "$URL/bulk-delayed" 2>/dev/null
+# The delayed download must have started (headers flushed once the 1 MiB cap
+# trips, well within 2 s: 200) and then be cut by curl's own cap (exit 28),
+# so the abort really lands mid-response.
+abort_code=$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' "$URL/bulk-delayed" 2>/dev/null); abort_rc=$?
+if [ "$abort_rc" = 28 ] && [ "$abort_code" = 200 ]; then
+    printf "  PASS  Client abort mid-delayed-response: 200 received, then cut (curl 28)\n"
+    PASS=$((PASS + 1))
+else
+    printf "  FAIL  Client abort mid-delayed-response: curl exit %s, status %s (expected 28 / 200)\n" "$abort_rc" "$abort_code"
+    FAIL=$((FAIL + 1))
+fi
 check "Client abort mid-delayed-response: server still answers" "$URL/" 200
 check_no_crash "In-flight cancellation (issue #53)"
 echo ""
@@ -1010,9 +1066,9 @@ echo "--- Body-less responses through the header delay (issue #52) ---"
 # delay must release on the immediate EOS (no hang: 5 s cap) and the status
 # must come through untouched, with an empty body.
 check_curl "204: status passes through the delay, no hang" "$URL/status204" 204 --max-time 5
-check_body "204: empty body"                                "$URL/status204" 204 '.' "!"
+check_raw_bodyless "204: nothing after the headers on the wire" "/status204" 204
 check_curl "304: status passes through the delay, no hang" "$URL/status304" 304 --max-time 5
-check_body "304: empty body"                                "$URL/status304" 304 '.' "!"
+check_raw_bodyless "304: nothing after the headers on the wire" "/status304" 304
 check_no_crash "Body-less responses through the header delay (issue #52)"
 echo ""
 
@@ -1199,7 +1255,13 @@ if [ -n "$CONTAINER" ]; then
     curl -sN --max-time 8 -o /dev/null "$URL/sse-stream" 2>/dev/null & sse_pid=$!
     curl -s  --max-time 8 -o /dev/null "$URL/bulk-delayed" 2>/dev/null & bulk_pid=$!
     sleep 0.5
-    docker exec "$CONTAINER" httpd -k graceful >/dev/null 2>&1
+    if docker exec "$CONTAINER" httpd -k graceful >/dev/null 2>&1; then
+        printf "  PASS  Graceful: httpd -k graceful accepted\n"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  Graceful: httpd -k graceful failed, the restart did not happen\n"
+        FAIL=$((FAIL + 1))
+    fi
     wait $sse_pid;  sse_rc=$?
     wait $bulk_pid; bulk_rc=$?
     for rcpair in "SSE stream:$sse_rc" "delayed download:$bulk_rc"; do
