@@ -1076,8 +1076,9 @@ echo ""
 echo "--- Phase 3/4 over HTTP/2 (h2c, issue #51) ---"
 # h2 changes the framing the header delay has to respect: the status travels
 # in a HEADERS frame and a blocked body must never become DATA frames. The
-# image speaks h2c only under the event MPM (mod_http2 does not support
-# prefork), so this section is skipped when the server does not negotiate
+# image loads mod_http2 only under the event MPM (under prefork it serves one
+# request at a time per connection), so this section is skipped when the
+# server does not negotiate
 # HTTP/2 -- the prefork cell then reports 8 tests fewer.
 h2ver=$(curl -s --http2-prior-knowledge --max-time 5 -o /dev/null -w '%{http_version}' "$URL/" 2>/dev/null)
 if [ "$h2ver" = "2" ]; then
@@ -1090,7 +1091,7 @@ if [ "$h2ver" = "2" ]; then
     check_h2c "h2c: body-less 204 through the delay"                         "/status204"                     204
     check_no_crash "Phase 3/4 over HTTP/2 (issue #51)"
 else
-    echo "  SKIP  server does not negotiate HTTP/2 (got HTTP/${h2ver:-?}); prefork MPM has no mod_http2"
+    echo "  SKIP  server does not negotiate HTTP/2 (got HTTP/${h2ver:-?}); the prefork image does not load mod_http2"
 fi
 echo ""
 

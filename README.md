@@ -199,8 +199,9 @@ the Go runtime inside libcoraza cannot be loaded before fork.
   `Header ... early` are.
 - Interim `1xx` responses from an upstream are neither inspected nor tested.
 - `SecRemoteRules` is not supported (see Directives).
-- Tested with the prefork and event MPMs. HTTP/2 needs event: `mod_http2`
-  does not support prefork.
+- Tested with the prefork and event MPMs. The HTTP/2 (h2c) tests run on the
+  event MPM only; `mod_http2` also works under prefork, but serves one request
+  at a time per connection there.
 
 ## License
 
