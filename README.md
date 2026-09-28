@@ -45,7 +45,7 @@ Builds everything from source (libcoraza + module):
 ```
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
-./test.sh http://localhost:8888
+./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 docker stop coraza-apache-test
 ```
 
@@ -54,12 +54,31 @@ To test with a specific MPM (default is event):
 ```
 docker build --no-cache --build-arg MPM=prefork -t coraza-test-prefork .
 docker run --rm -d --name coraza-test-prefork -p 8889:80 coraza-test-prefork
-./test.sh http://localhost:8889 --mpm=prefork
+./test.sh http://localhost:8889 --mpm=prefork --container=coraza-test-prefork
 docker stop coraza-test-prefork
 ```
 
-The `--mpm` flag verifies the server is running the expected MPM via the
-`server-info` endpoint.
+## Testing
+
+`test.sh` runs the integration suite against a running server; [TESTS.md](TESTS.md)
+describes every section. The `--mpm` flag verifies the server runs the expected
+MPM via the `server-info` endpoint. `--container=NAME` lets the suite look
+inside the container: audit and debug log checks, config validation with
+`httpd -t`, a graceful restart over in-flight requests, and a crash sweep after
+every section. Without it about a third of the checks are skipped.
+
+To run the same suite with the module built under AddressSanitizer and
+UndefinedBehaviorSanitizer:
+
+```
+docker build --no-cache --build-arg SANITIZE=1 -t coraza-apache-asan .
+docker run --rm -d --name coraza-apache-asan -p 8888:80 coraza-apache-asan
+./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-asan
+```
+
+The image preloads the sanitizer runtime into httpd, and any sanitizer report
+in the log fails the suite. CI runs this on every pull request (`A/UBSan`
+workflow). Outside Docker, `make SANITIZE=1` builds the instrumented module.
 
 ## Configuration example
 
@@ -145,7 +164,11 @@ any module that spools request bodies. Separate from the engine's
 The module hooks into Apache's request processing:
 
 - **Phase 1** (fixups hook): connection info, URI, request headers
-- **Phase 2** (fixups hook): request body -- read proactively via ap_get_client_block()
+- **Phase 2** (fixups hook): request body -- read in full before the handler
+  runs, then replayed to the handler (or to `mod_proxy`) by the `CORAZA_IN`
+  input filter. Under `SecRequestBodyAccess Off` the body is still read and
+  replayed but not handed to the engine; phase-2 rules on headers and URI
+  still run.
 - **Phase 3-4** (output filter): response headers and body, with header delay
   while the body is inspected. When it will not be (`SecResponseBodyAccess Off`,
   or a Content-Type outside `SecResponseBodyMimeType`) phase 4 is finalised
@@ -160,13 +183,24 @@ not repeated, phases 3-4 inspect the response actually served, and there is one
 audit entry. An error page served because that transaction denied the request
 is passed through as-is rather than inspected and possibly denied again.
 
+Reverse-proxied traffic (`mod_proxy_http`) is inspected like local traffic:
+the upstream's response headers reach phase 3 and the proxied body phase 4.
+HTTP/2 is covered too (tested over h2c with `mod_http2`, event MPM).
+
 Rules are collected as strings during config parsing (master process)
 and replayed in each child process after dlopen. This is required because
 the Go runtime inside libcoraza cannot be loaded before fork.
 
 ## Limitations
 
-- Tested with prefork and event MPMs
+- Response headers that `mod_headers` sets in its normal mode (`Header set`)
+  are not visible to phase-3 rules: its output filter runs after the module's.
+  Headers set by the handler, by an upstream through `mod_proxy`, or with
+  `Header ... early` are.
+- Interim `1xx` responses from an upstream are neither inspected nor tested.
+- `SecRemoteRules` is not supported (see Directives).
+- Tested with the prefork and event MPMs. HTTP/2 needs event: `mod_http2`
+  does not support prefork.
 
 ## License
 
