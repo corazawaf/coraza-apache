@@ -26,7 +26,7 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 
 | Flag | Effect |
 |------|--------|
-| `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test). The HTTP/2 section is not flag-driven: it probes h2c and skips itself on a server that does not negotiate it, so a prefork image (no mod_http2) reports 8 tests fewer |
+| `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test). The HTTP/2 section is not flag-driven: it probes h2c and skips itself on a server that does not negotiate it, so the prefork image (which does not load mod_http2) reports 8 tests fewer |
 | `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+98 tests) |
 
 ## Test Categories
@@ -74,7 +74,8 @@ Clean requests return 405 (WAF passes, Apache rejects method).
 ### Phase 3/4 over HTTP/2 (7 tests + 1 sweep, event MPM only)
 
 Issue #51. The image loads `mod_http2` and sets `Protocols h2c http/1.1` under
-the event MPM (mod_http2 does not support prefork). With curl's
+the event MPM only (under prefork mod_http2 serves one request at a time per
+connection, so the image does not load it there). With curl's
 `--http2-prior-knowledge`, each check also asserts that the exchange ran over
 HTTP/2: a plain request negotiates h2; the phase-3 Content-Type deny and the
 phase-4 body deny return 403, the latter serving the custom error page with no

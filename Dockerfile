@@ -159,7 +159,8 @@ RUN { \
     else \
       echo 'LoadModule cgid_module modules/mod_cgid.so'; \
       # HTTP/2 over cleartext (h2c) so the phase-3/4 tests can run over h2 too \
-      # (issue #51). mod_http2 does not support the prefork MPM. \
+      # (issue #51). Event only: under prefork mod_http2 serves one request \
+      # at a time per connection, which the streaming tests would trip over. \
       echo 'LoadModule http2_module modules/mod_http2.so'; \
       echo 'Protocols h2c http/1.1'; \
     fi; \
