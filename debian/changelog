@@ -1,3 +1,32 @@
+libapache2-mod-coraza (0.22.0-1) unstable; urgency=low
+
+  * New upstream release 0.22.0.
+  * Require libcoraza >= 1.8.0; support for 1.7 is dropped. The module needs
+    coraza_is_response_body_accessible(), new in 1.8, to know whether a
+    response body will be inspected; it refuses to load against an older
+    shared library.
+  * The request body read for inspection is now handed on to the application
+    (replayed by the CORAZA_IN filter, spooled to disk above
+    CorazaRequestBodyInMemoryLimit); handlers no longer see an empty body.
+  * Response headers are no longer held back when the body will not be
+    inspected: phase 4 is finalised before the headers go out, so streaming
+    responses reach the client at once while phase-4 rules on non-body
+    variables still deny cleanly, SSE included.
+  * A deny decided in the output filter now reaches the configured
+    ErrorDocument instead of httpd's recursive-error page.
+  * Delayed response buckets are set aside: a proxied response under the
+    header delay could previously be released corrupted.
+  * The transaction is reused across internal redirects (ErrorDocument,
+    FallbackResource) instead of re-inspecting; a WAF cache hit now compares
+    the rule content, not just hash and count; every engine result is checked
+    and fails closed; SecRemoteRules and a ruleless "Coraza On" are rejected
+    at httpd -t; the protocol version is reported as it arrived.
+  * Performance: request and response headers are submitted in bulk, the
+    body is read in 64 KiB chunks, and it is not submitted to the engine when
+    body access is off.
+
+ -- Pierre Pomes <pierre.pomes@gmail.com>  Wed, 07 Oct 2026 12:00:00 +0000
+
 libapache2-mod-coraza (0.21.0-1) unstable; urgency=low
 
   * New upstream release 0.21.0.
