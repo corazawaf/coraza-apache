@@ -36,7 +36,9 @@ jobs:
 
       - name: Start Apache container
         run: |
-          docker run --rm -d \
+          # No --rm: a crashed httpd would take its log with it before the
+          # failure step below can read it. The container is removed at the end.
+          docker run -d \
             --name coraza-apache-${{ matrix.mpm }} \
             -p 8888:80 \
             coraza-apache-${{ matrix.mpm }}
@@ -89,8 +91,8 @@ jobs:
             mod_coraza.so
 
       - name: Save the container log
-        # The container runs with --rm: once stopped its log is gone, and a
-        # failed suite leaves nothing to read. Keep it as an artifact.
+        # A failed suite leaves nothing to read once the container is gone.
+        # Keep its log as an artifact.
         if: failure()
         run: docker logs coraza-apache-${{ matrix.mpm }} > httpd-container.log 2>&1 || true
 
@@ -104,7 +106,7 @@ jobs:
 
       - name: Stop container
         if: always()
-        run: docker stop coraza-apache-${{ matrix.mpm }} || true
+        run: docker rm -f coraza-apache-${{ matrix.mpm }} || true
 
       - name: Upload module artifact
         if: matrix.mpm == 'event' && matrix.libcoraza == 'v1.8.0'
