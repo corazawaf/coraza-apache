@@ -20,11 +20,12 @@
 # fixture has the same guard). Ignore the signal and exit cleanly on EPIPE.
 trap '' PIPE
 body=$(mktemp)
+# Remove the spool whichever way the script leaves (EPIPE exits included).
+trap 'rm -f "$body"' EXIT
 cat > "$body"
 /usr/bin/printf 'Content-Type: text/plain\r\n\r\n' || exit 0
 /usr/bin/printf 'CONTENT_LENGTH=[%s]\n' "${CONTENT_LENGTH:-}" || exit 0
 /usr/bin/printf 'BODY=[' || exit 0
 cat "$body" || :
 /usr/bin/printf ']\n' || :
-rm -f "$body"
 exit 0
