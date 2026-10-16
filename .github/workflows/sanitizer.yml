@@ -66,8 +66,8 @@ jobs:
           echo "no sanitizer report in the container log ($(printf '%s\n' "$log" | wc -l) lines read)"
 
       - name: Save the container log
-        # The container runs with --rm: once stopped its log is gone, and a
-        # failed suite leaves nothing to read. Keep it as an artifact.
+        # A failed suite leaves nothing to read once the container is removed.
+        # Keep its log as an artifact.
         if: failure()
         run: docker logs coraza-apache-asan > httpd-container.log 2>&1 || true
 
