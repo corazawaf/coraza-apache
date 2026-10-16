@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.1](https://github.com/corazawaf/coraza-apache/compare/v0.22.0...v0.22.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* enforce every intervention; drop closes the connection, sub-300 denies become 403 ([#80](https://github.com/corazawaf/coraza-apache/issues/80)) ([afd8ce3](https://github.com/corazawaf/coraza-apache/commit/afd8ce39ddceca696e11000e3af69d4c584e5751))
+
 ## [0.22.0](https://github.com/corazawaf/coraza-apache/compare/v0.21.0...v0.22.0) (2026-10-07)
 
 
