@@ -176,6 +176,18 @@ The module hooks into Apache's request processing:
   gets a clean error page.
 - **Phase 5** (log_transaction hook): audit logging
 
+Every intervention the engine reports is enforced. A `deny` or `redirect` is
+served with the rule's status through Apache's error handling (`ErrorDocument`
+applies); a deny whose status is below 300, other than 201 or 204, is served
+as 403 -- an empty 200 would be cacheable and is not what anyone means by a
+block. `drop`, and `deny,status:444`, close the connection without sending a
+byte; the audit log and the access log record 403 with the message "Access
+denied with connection close", as ModSecurity does on Apache. Under HTTP/2
+the stream is reset while the connection survives (ModSecurity closes the
+whole connection there). A drop decided in
+phase 3 or 4 after the headers have already gone out (streaming body, delay
+off or cap exceeded) truncates the response the same way.
+
 An internal redirect (`ErrorDocument`, `FallbackResource`, `DirectoryIndex`,
 `mod_rewrite`) creates a new `request_rec` for the same client request. The
 module reuses the transaction of the request the client sent: phases 1-2 are

@@ -118,6 +118,32 @@ coraza_fail_closed_headers(ap_filter_t *f, request_rec *r,
 }
 
 /*
+ * Enforce a drop decided in this filter: nothing more reaches the client.
+ * Whether the headers are still delayed (phase 3, or phase 4 with the body
+ * held back) or already on the wire (streaming phase 4), the buffered and the
+ * current brigades are discarded, the connection is marked aborted so the
+ * core output filter drops everything below us -- including the error page
+ * ap_die() generates when the handler returns AP_FILTER_ERROR -- and the
+ * socket is closed without lingering. Returning APR_ECONNABORTED is what the
+ * core filter itself returns on an aborted connection, so every handler
+ * (default_handler, mod_cgi(d), mod_proxy) already treats it as "client gone".
+ */
+static apr_status_t
+coraza_drop_response(ap_filter_t *f, request_rec *r,
+                     coraza_request_ctx_t *ctx, apr_bucket_brigade *bb)
+{
+    ctx->intervention_triggered = 1;
+    ap_remove_output_filter(f);
+    if (ctx->headers_delayed) {
+        ctx->headers_delayed = 0;
+        apr_brigade_cleanup(ctx->pending_brigade);
+    }
+    apr_brigade_cleanup(bb);
+    coraza_drop_connection(r);
+    return APR_ECONNABORTED;
+}
+
+/*
  * Output filter: phases 3 (response headers) and 4 (response body).
  *
  * Implements header delay: buffers all output buckets in a pending brigade
@@ -259,6 +285,9 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
         ret = coraza_process_intervention(ctx->transaction, r, 0);
         if (ret > 0) {
+            if (ctx->drop_connection) {
+                return coraza_drop_response(f, r, ctx, bb);
+            }
             /* Phase 3 intervention: no data sent yet, generate clean error */
             ctx->intervention_triggered = 1;
             ap_remove_output_filter(f);
@@ -295,6 +324,9 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
             ret = coraza_process_intervention(ctx->transaction, r, 0);
             if (ret > 0) {
+                if (ctx->drop_connection) {
+                    return coraza_drop_response(f, r, ctx, bb);
+                }
                 /* Phase 4 deny with nothing sent yet: clean error page. */
                 ctx->intervention_triggered = 1;
                 ap_remove_output_filter(f);
@@ -415,6 +447,9 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
             ret = coraza_process_intervention(ctx->transaction, r, 0);
             if (ret > 0) {
+                if (ctx->drop_connection) {
+                    return coraza_drop_response(f, r, ctx, bb);
+                }
                 ctx->intervention_triggered = 1;
                 ap_remove_output_filter(f);
                 if (ctx->headers_delayed) {
@@ -440,8 +475,11 @@ coraza_output_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
         ret = coraza_process_intervention(ctx->transaction, r, 0);
         if (ret > 0) {
-            ctx->intervention_triggered = 1;
             ctx->phase4_done = 1;
+            if (ctx->drop_connection) {
+                return coraza_drop_response(f, r, ctx, bb);
+            }
+            ctx->intervention_triggered = 1;
             ap_remove_output_filter(f);
             if (ctx->headers_delayed) {
                 /* Nothing sent yet — generate clean error response */

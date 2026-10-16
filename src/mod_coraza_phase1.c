@@ -57,6 +57,27 @@ coraza_open_body_spool(request_rec *r, apr_file_t **spool)
 }
 
 /*
+ * Turn a coraza_process_intervention() result into the hook's return value.
+ * A deny or redirect is returned as the status for ap_die() to serve. A drop
+ * must put nothing on the wire: mark the connection aborted and return DONE,
+ * which skips the handler and the error page; ap_finalize_request_protocol()
+ * then only passes an EOS that the core output filter discards (c->aborted)
+ * before the connection is closed. The audit entry was already written by
+ * coraza_process_intervention() (early_log) with status 403 and the
+ * "connection close" message.
+ */
+static int
+coraza_enforce_intervention(request_rec *r, coraza_request_ctx_t *ctx, int status)
+{
+    ctx->intervention_triggered = 1;
+    if (ctx->drop_connection) {
+        coraza_drop_connection(r);
+        return DONE;
+    }
+    return status;
+}
+
+/*
  * Fixups hook (runs as APR_HOOK_REALLY_FIRST):
  * - Phase 1: feed connection info, URI, method, and request headers to Coraza
  * - Phase 2: proactively read and inspect the full request body
@@ -156,8 +177,7 @@ coraza_post_read_request(request_rec *r)
 
         ret = coraza_process_intervention(ctx->transaction, r, 1);
         if (ret > 0) {
-            ctx->intervention_triggered = 1;
-            return ret;
+            return coraza_enforce_intervention(r, ctx, ret);
         }
     }
 
@@ -212,8 +232,7 @@ coraza_post_read_request(request_rec *r)
 
         ret = coraza_process_intervention(ctx->transaction, r, 1);
         if (ret > 0) {
-            ctx->intervention_triggered = 1;
-            return ret;
+            return coraza_enforce_intervention(r, ctx, ret);
         }
     }
 
@@ -300,8 +319,7 @@ coraza_post_read_request(request_rec *r)
 
         ret = coraza_process_intervention(ctx->transaction, r, 1);
         if (ret > 0) {
-            ctx->intervention_triggered = 1;
-            return ret;
+            return coraza_enforce_intervention(r, ctx, ret);
         }
     }
 
@@ -401,8 +419,7 @@ coraza_post_read_request(request_rec *r)
 
                 ret = coraza_process_intervention(ctx->transaction, r, 1);
                 if (ret > 0) {
-                    ctx->intervention_triggered = 1;
-                    return ret;
+                    return coraza_enforce_intervention(r, ctx, ret);
                 }
             }
 
@@ -439,8 +456,7 @@ coraza_post_read_request(request_rec *r)
 
             ret = coraza_process_intervention(ctx->transaction, r, 1);
             if (ret > 0) {
-                ctx->intervention_triggered = 1;
-                return ret;
+                return coraza_enforce_intervention(r, ctx, ret);
             }
         } else {
             /* No body to read, still finalize phase 2 */
@@ -452,8 +468,7 @@ coraza_post_read_request(request_rec *r)
 
             ret = coraza_process_intervention(ctx->transaction, r, 1);
             if (ret > 0) {
-                ctx->intervention_triggered = 1;
-                return ret;
+                return coraza_enforce_intervention(r, ctx, ret);
             }
         }
     }

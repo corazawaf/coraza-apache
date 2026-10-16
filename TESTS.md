@@ -1,6 +1,6 @@
 # Test Coverage
 
-The integration test suite (`test.sh`) runs **314 tests** against a Docker
+The integration test suite (`test.sh`) runs **343 tests** against a Docker
 container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost configurations.
 
 ## Running
@@ -10,10 +10,10 @@ container with CRS v4 and multiple Location/Directory/.htaccess/VirtualHost conf
 docker build --no-cache -t coraza-apache-test .
 docker run --rm -d --name coraza-apache-test -p 8888:80 coraza-apache-test
 
-# Full suite (314 tests, event MPM)
+# Full suite (343 tests, event MPM)
 ./test.sh http://localhost:8888 --mpm=event --container=coraza-apache-test
 
-# Minimal (215 tests, no audit/debug log checks, no MPM verification)
+# Minimal (229 tests, no audit/debug log checks, no MPM verification)
 ./test.sh http://localhost:8888
 
 # Prefork MPM
@@ -26,8 +26,8 @@ docker run --rm -d --name coraza-prefork -p 8889:80 coraza-prefork
 
 | Flag | Effect |
 |------|--------|
-| `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test). The HTTP/2 section is not flag-driven: it probes h2c and skips itself on a server that does not negotiate it, so the prefork image (which does not load mod_http2) reports 8 tests fewer |
-| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+98 tests) |
+| `--mpm=event\|prefork` | Verifies active MPM via `/server-info` (+1 test). The HTTP/2 section is not flag-driven: it probes h2c and skips itself on a server that does not negotiate it, so the prefork image (which does not load mod_http2) reports 9 tests fewer |
+| `--container=NAME` | Enables audit/debug log tests via `docker exec` and the crash sweep (+113 tests) |
 
 ## Test Categories
 
@@ -71,7 +71,7 @@ Clean requests return 405 (WAF passes, Apache rejects method).
 | Phase 4 | output filter | 4 (RESPONSE_BODY match: deny + pass; same ErrorDocument checks) |
 | `ARGS_POST` | fixups (phase 2) | 3 (`cmd=boom` in the body denied, `cmd=safe` passes, `?cmd=boom` in the query passes: the selector is `ARGS_POST`, not `ARGS`; issue #49) |
 
-### Phase 3/4 over HTTP/2 (7 tests + 1 sweep, event MPM only)
+### Phase 3/4 over HTTP/2 (8 tests + 1 sweep, event MPM only)
 
 Issue #51. The image loads `mod_http2` and sets `Protocols h2c http/1.1` under
 the event MPM only (under prefork mod_http2 serves one request at a time per
@@ -81,8 +81,10 @@ HTTP/2: a plain request negotiates h2; the phase-3 Content-Type deny and the
 phase-4 body deny return 403, the latter serving the custom error page with no
 `OK` byte of the blocked body reaching the client (over h2 a blocked body must
 never become DATA frames); the phase-4 pass delivers its body; a redirect
-intervention keeps its 302; a body-less 204 crosses the header delay. The
-section probes h2c first and skips itself, with a `SKIP` line, when the server
+intervention keeps its 302; a body-less 204 crosses the header delay; a drop
+(issue #76) resets the stream only -- the dropped request ends with no status
+and the next request on the same connection is served. The section probes
+h2c first and skips itself, with a `SKIP` line, when the server
 does not negotiate HTTP/2.
 
 ### Config Merging (6 tests)
@@ -310,6 +312,17 @@ writes the DetectionOnly transaction under `RelevantOnly` + `noauditlog` (empty
 H section), which is engine behaviour, not the connector's. Followed by a crash
 sweep.
 
+### Drop interventions proven via the audit log (13 tests + 1 sweep, requires `--container`)
+
+Issue #76. The wire says nothing on a drop by design, so the logs are the
+witness: the connector's decision line in the container log (`Access denied
+with connection close (rule N)` for a drop, `Access denied with code 403` for
+the remapped `deny,status:200`), the rule id in the per-location audit log,
+and for the phase-4 drop the status line the engine recorded in part F
+(`HTTP/1.1 403`; a phase-1 entry has no response section). The `DetectionOnly` twin
+(`/drop-detect`) is served with 200, logs the match, and must not log a drop.
+Followed by a crash sweep.
+
 ### auditlog action with RelevantOnly (3 tests, requires `--container`)
 
 `SecAuditEngine RelevantOnly` with a rule carrying `auditlog` / `noauditlog`:
@@ -340,6 +353,22 @@ body, the delay must release the headers on the immediate EOS (a 5 s cap
 catches a hang) and the status must come through untouched; a raw-socket read
 checks that not one byte follows the headers (curl discards a 204/304 body by
 design, so it cannot tell). Followed by a crash sweep.
+
+### Drop and sub-300 deny interventions (13 tests + 1 sweep)
+
+Issue #76. A bare `drop` reaches the connector with status 0 and
+`deny,status:200` with 200; both used to be served because the decision was
+made on the status alone. `/drop` (phase 1), `/drop-body` (phase 2, echo CGI),
+`/drop-resp` (phases 3 and 4, echo CGI under `text/plain` with body access on)
+carry `drop`, `deny,status:444`, `deny,status:200` and `deny,status:204` rules
+keyed on `ARGS:x`. `check_raw_dropped` proves "nothing sent": it reads the
+socket through `/dev/tcp` under `timeout 5` and passes only on EOF (or reset)
+with zero bytes -- a hang is 124, bytes are a failure; `nc` cannot tell the
+two apart. Asserts: the drop sends nothing and closes in phases 1, 2, 3 and 4
+(the phase-4 one on a delayed body), a pipelined request behind a drop is never
+answered, a new connection is served afterwards, `deny,status:200` is 403 on
+the wire in phases 1 and 3, `deny,status:204` keeps its body-less 204, and the
+benign request on each location passes. Followed by a crash sweep.
 
 ### Delayed response cap log (1 test, requires `--container`)
 
@@ -418,7 +447,7 @@ Validated with 80 parallel runs (8 concurrent × 10 rounds) under event MPM:
 ## Graceful Restart
 
 Validated `httpd -k graceful` survives multiple cycles including 3 rapid
-restarts (1s apart). Full 314-test suite passes after all restarts.
+restarts (1s apart). Full 343-test suite passes after all restarts.
 Old workers clean up WAFs on exit, new workers rebuild via child_init. The
 suite itself now restarts the server once, over in-flight requests (issue #53
 above).
