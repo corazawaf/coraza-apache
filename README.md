@@ -196,7 +196,9 @@ the Go runtime inside libcoraza cannot be loaded before fork.
 - Response headers that `mod_headers` sets in its normal mode (`Header set`)
   are not visible to phase-3 rules: its output filter runs after the module's.
   Headers set by the handler, by an upstream through `mod_proxy`, or with
-  `Header ... early` are.
+  `Header ... early` are. For the same reason the `Content-Encoding` and
+  `Vary` that `mod_deflate` adds are not seen either; the response body is
+  inspected before compression, uncompressed.
 - Interim `1xx` responses from an upstream are neither inspected nor tested.
 - `SecRemoteRules` is not supported (see Directives).
 - Tested with the prefork and event MPMs. The HTTP/2 (h2c) tests run on the
