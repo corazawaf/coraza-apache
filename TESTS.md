@@ -315,11 +315,11 @@ sweep.
 ### Drop interventions proven via the audit log (13 tests + 1 sweep, requires `--container`)
 
 Issue #76. The wire says nothing on a drop by design, so the logs are the
-witness: the connector's decision line in the container log (`connection
-dropped (rule N)` for a drop, `Access denied with code 403` for the remapped
-`deny,status:200`), the rule id in the per-location audit log, and for the
-phase-4 drop the status line the engine recorded in part F (`HTTP/1.1 444`;
-a phase-1 entry has no response section). The `DetectionOnly` twin
+witness: the connector's decision line in the container log (`Access denied
+with connection close (rule N)` for a drop, `Access denied with code 403` for
+the remapped `deny,status:200`), the rule id in the per-location audit log,
+and for the phase-4 drop the status line the engine recorded in part F
+(`HTTP/1.1 403`; a phase-1 entry has no response section). The `DetectionOnly` twin
 (`/drop-detect`) is served with 200, logs the match, and must not log a drop.
 Followed by a crash sweep.
 

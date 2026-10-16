@@ -181,8 +181,10 @@ served with the rule's status through Apache's error handling (`ErrorDocument`
 applies); a deny whose status is below 300, other than 201 or 204, is served
 as 403 -- an empty 200 would be cacheable and is not what anyone means by a
 block. `drop`, and `deny,status:444`, close the connection without sending a
-byte: the audit log records status 444 (so does the access log), and under
-HTTP/2 the stream is reset while the connection survives. A drop decided in
+byte; the audit log and the access log record 403 with the message "Access
+denied with connection close", as ModSecurity does on Apache. Under HTTP/2
+the stream is reset while the connection survives (ModSecurity closes the
+whole connection there). A drop decided in
 phase 3 or 4 after the headers have already gone out (streaming body, delay
 off or cap exceeded) truncates the response the same way.
 

@@ -326,7 +326,8 @@ RUN { \
     echo '# --- drop and sub-300 deny interventions (issue #76) ---'; \
     echo '# A bare drop (status 0) and deny,status:200 used to be served: the'; \
     echo '# connector decided on the status alone. Every intervention blocks now:'; \
-    echo '# drop / 444 close the connection with nothing sent (audited as 444),'; \
+    echo '# drop / 444 close the connection with nothing sent (audited as 403,'; \
+    echo '# "Access denied with connection close", as ModSecurity does),'; \
     echo '# a deny below 300 other than 201/204 is served as 403. One audit log'; \
     echo '# per location (parts ABFHZ: F carries the recorded status).'; \
     echo '<Location "/drop">'; \

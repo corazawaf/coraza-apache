@@ -235,13 +235,14 @@ coraza_pack_headers(apr_pool_t *p, const coraza_header_pair_t *pairs,
  * AP_CONN_CLOSE additionally keeps ap_discard_request_body() from draining
  * an unread body. Under mod_http2 the request's connection is the stream's
  * pseudo-connection, so this resets the stream and the HTTP/2 connection
- * survives. The status is set to 444 for the access log (%s), mirroring
- * nginx's convention; it is never serialised.
+ * survives. The request status is set to 403 for the access log (%s), the
+ * convention ModSecurity established on Apache for a drop ("Access denied
+ * with connection close"); httpd has no 444 and nothing is serialised.
  */
 void
 coraza_drop_connection(request_rec *r)
 {
-    r->status = 444;
+    r->status = HTTP_FORBIDDEN;
     r->connection->keepalive = AP_CONN_CLOSE;
     r->connection->aborted = 1;
 }
@@ -255,8 +256,9 @@ coraza_drop_connection(request_rec *r)
  * rule gives none; only deny defaults to 403), and `deny,status:200` with
  * 200: deciding on the status alone, as this function once did, served both
  * of those (issue #76). The decision is therefore:
- *   - `drop`, or any status 444: close the connection without a response
- *     (ctx->drop_connection, status 444 in the audit log);
+ *   - `drop`, or a rule status of 444 (nginx's spelling of a drop): close
+ *     the connection without a response (ctx->drop_connection); the audit
+ *     log and the access log record 403, as ModSecurity does on Apache;
  *   - a status below 300 other than 201/204 (0, 200, 1xx ...): served as
  *     403 -- a "refusal" that looks like success is not a block, and a 200
  *     with an empty body would be cacheable;
@@ -289,7 +291,7 @@ coraza_process_intervention(coraza_transaction_t transaction,
            || status == 444;
 
     if (drop) {
-        status = 444;
+        status = HTTP_FORBIDDEN;
         ctx->drop_connection = 1;
     } else if (status < 300 && status != HTTP_CREATED
                && status != HTTP_NO_CONTENT) {
@@ -300,7 +302,7 @@ coraza_process_intervention(coraza_transaction_t transaction,
 
     if (drop) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
-                      "Coraza: Access denied, connection dropped (rule %d)",
+                      "Coraza: Access denied with connection close (rule %d)",
                       intervention->rule_id);
     } else {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,

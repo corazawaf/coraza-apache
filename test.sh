@@ -1182,7 +1182,8 @@ echo ""
 echo "--- Drop and sub-300 deny interventions (issue #76) ---"
 # A bare `drop` reaches the connector with status 0 and `deny,status:200`
 # with 200; both used to be served because the decision was made on the
-# status alone. Now drop and 444 close the connection with nothing sent, a
+# status alone. Now drop and 444 close the connection with nothing sent (the
+# logs record 403 with "connection close", as ModSecurity does on Apache), a
 # deny below 300 (other than 201/204) is served as 403, and 201/204 keep
 # their body-less status. The raw helper proves "nothing sent": curl would
 # report an empty reply for a reset and a timeout for a hang alike.
@@ -1621,14 +1622,14 @@ SecRemoteRulesFailAction Abort' 0 'Syntax OK'
 
     echo "--- Drop interventions proven via the audit log (issue #76) ---"
     # The wire says nothing on a drop by design, so the logs are the witness:
-    # the connector's own decision line in the container log ("connection
-    # dropped (rule N)" / "Access denied with code 403"), the rule id in the
-    # per-location audit log, and for a phase-4 drop the status line the
-    # engine recorded (part F: "HTTP/1.1 444"). The DetectionOnly twin is
+    # the connector's own decision line in the container log ("Access denied
+    # with connection close (rule N)" / "Access denied with code 403"), the
+    # rule id in the per-location audit log, and for a phase-4 drop the status
+    # line the engine recorded (part F: "HTTP/1.1 403"). The DetectionOnly twin is
     # served, logs the match, and must not log a drop.
     clear_perloc_audit_logs
     check_raw_dropped "Drop audit: phase-1 drop" "GET /drop?x=drop HTTP/1.1\r\nHost: localhost\r\n\r\n"
-    check_container_log    "Drop audit: phase-1 drop decision logged"  "connection dropped (rule 33001)"
+    check_container_log    "Drop audit: phase-1 drop decision logged"  "connection close (rule 33001)"
     check_perloc_audit_log "Drop audit: phase-1 drop rule id audited"  "/var/log/coraza/audit/drop.log" '33001'
     clear_perloc_audit_logs
     check "Drop audit: deny,status:200 served as 403"               "$URL/drop?x=deny200" 403
@@ -1636,13 +1637,13 @@ SecRemoteRulesFailAction Abort' 0 'Syntax OK'
     check_perloc_audit_log "Drop audit: remapped deny rule id audited" "/var/log/coraza/audit/drop.log" '33002'
     clear_perloc_audit_logs
     check_raw_dropped "Drop audit: phase-4 drop" "GET /drop-resp?x=drop4 HTTP/1.1\r\nHost: localhost\r\n\r\n"
-    check_container_log    "Drop audit: phase-4 drop decision logged"  "connection dropped (rule 33022)"
+    check_container_log    "Drop audit: phase-4 drop decision logged"  "connection close (rule 33022)"
     check_perloc_audit_log "Drop audit: phase-4 drop rule id audited"  "/var/log/coraza/audit/drop-resp.log" '33022'
-    check_perloc_audit_log "Drop audit: phase-4 drop recorded as 444"  "/var/log/coraza/audit/drop-resp.log" 'HTTP/1.1 444'
+    check_perloc_audit_log "Drop audit: phase-4 drop recorded as 403"  "/var/log/coraza/audit/drop-resp.log" 'HTTP/1.1 403'
     clear_perloc_audit_logs
     check "Drop audit: DetectionOnly twin is served"                "$URL/drop-detect?x=drop" 200
     check_perloc_audit_log "Drop audit: DetectionOnly match audited" "/var/log/coraza/audit/drop-detect.log" '33030'
-    if docker logs "$CONTAINER" 2>&1 | grep -q "connection dropped (rule 33030)"; then
+    if docker logs "$CONTAINER" 2>&1 | grep -q "connection close (rule 33030)"; then
         printf "  FAIL  Drop audit: DetectionOnly twin must not drop\n"
         FAIL=$((FAIL + 1))
     else

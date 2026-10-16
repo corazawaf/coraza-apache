@@ -172,7 +172,7 @@ char *coraza_pack_headers(apr_pool_t *p, const coraza_header_pair_t *pairs,
 
 /* Check WAF intervention; return OK if none, else the status to enforce:
  * the rule's own status for deny/redirect (a deny below 300, other than
- * 201/204, is served as 403 -- see coraza_process_intervention()), or 444
+ * 201/204, is served as 403 -- see coraza_process_intervention()), or 403
  * with ctx->drop_connection set for `drop` and `deny,status:444`, which close
  * the connection without a response. If early_log is set, triggers audit
  * logging before returning. */
@@ -181,7 +181,7 @@ int coraza_process_intervention(coraza_transaction_t transaction,
 
 /* Enforce a drop decided by coraza_process_intervention(): mark the connection
  * aborted so nothing more is written to the client and httpd closes it
- * without lingering, and record 444 as the request status for the access log.
+ * without lingering, and record 403 as the request status for the access log.
  * Phase 1-2 callers return DONE afterwards (no handler, no error page);
  * the output filter discards its brigades and returns APR_ECONNABORTED. */
 void coraza_drop_connection(request_rec *r);

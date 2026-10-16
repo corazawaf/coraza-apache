@@ -63,7 +63,8 @@ coraza_open_body_spool(request_rec *r, apr_file_t **spool)
  * which skips the handler and the error page; ap_finalize_request_protocol()
  * then only passes an EOS that the core output filter discards (c->aborted)
  * before the connection is closed. The audit entry was already written by
- * coraza_process_intervention() (early_log) with status 444.
+ * coraza_process_intervention() (early_log) with status 403 and the
+ * "connection close" message.
  */
 static int
 coraza_enforce_intervention(request_rec *r, coraza_request_ctx_t *ctx, int status)
