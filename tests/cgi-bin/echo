@@ -12,11 +12,19 @@
 # reads the script's stdout, so echoing while reading deadlocks once the body
 # outgrows the pipe buffers; slurping first makes the test valid on both CGI
 # transports.
+#
+# A phase-3/4 drop (issue #76) closes the client connection while this script
+# may still be writing; with SIGPIPE at its default the script dies of the
+# signal, PID 1 (httpd) reaps the orphan and logs AH00052 "exit signal Broken
+# pipe", which the crash sweep would mistake for a worker crash (the bulk
+# fixture has the same guard). Ignore the signal and exit cleanly on EPIPE.
+trap '' PIPE
 body=$(mktemp)
 cat > "$body"
-/usr/bin/printf 'Content-Type: text/plain\r\n\r\n'
-/usr/bin/printf 'CONTENT_LENGTH=[%s]\n' "${CONTENT_LENGTH:-}"
-/usr/bin/printf 'BODY=['
-cat "$body"
-/usr/bin/printf ']\n'
+/usr/bin/printf 'Content-Type: text/plain\r\n\r\n' || exit 0
+/usr/bin/printf 'CONTENT_LENGTH=[%s]\n' "${CONTENT_LENGTH:-}" || exit 0
+/usr/bin/printf 'BODY=[' || exit 0
+cat "$body" || :
+/usr/bin/printf ']\n' || :
 rm -f "$body"
+exit 0

@@ -265,6 +265,8 @@ RUN { \
     echo 'ScriptAlias "/stream-json-on" "/usr/local/apache2/cgi-bin/stream-json"'; \
     echo 'ScriptAlias "/status204" "/usr/local/apache2/cgi-bin/status"'; \
     echo 'ScriptAlias "/status304" "/usr/local/apache2/cgi-bin/status"'; \
+    echo 'ScriptAlias "/drop-body" "/usr/local/apache2/cgi-bin/echo"'; \
+    echo 'ScriptAlias "/drop-resp" "/usr/local/apache2/cgi-bin/echo"'; \
     echo '<Directory "/usr/local/apache2/cgi-bin">'; \
     echo '    Require all granted'; \
     echo '    Options +ExecCGI'; \
@@ -320,6 +322,48 @@ RUN { \
     echo '    SecResponseBodyAccess On'; \
     echo '    SecResponseBodyMimeType text/html'; \
     echo '    SecRule RESPONSE_BODY "@contains OK" "id:20841,phase:4,deny,status:403,log"'; \
+    echo '</Location>'; \
+    echo '# --- drop and sub-300 deny interventions (issue #76) ---'; \
+    echo '# A bare drop (status 0) and deny,status:200 used to be served: the'; \
+    echo '# connector decided on the status alone. Every intervention blocks now:'; \
+    echo '# drop / 444 close the connection with nothing sent (audited as 444),'; \
+    echo '# a deny below 300 other than 201/204 is served as 403. One audit log'; \
+    echo '# per location (parts ABFHZ: F carries the recorded status).'; \
+    echo '<Location "/drop">'; \
+    echo '    SecAuditEngine On'; \
+    echo '    SecAuditLogParts ABFHZ'; \
+    echo '    SecAuditLogType Serial'; \
+    echo '    SecAuditLog /var/log/coraza/audit/drop.log'; \
+    echo '    SecRule ARGS:x "@streq drop" "id:33001,phase:1,drop,log"'; \
+    echo '    SecRule ARGS:x "@streq deny200" "id:33002,phase:1,deny,status:200,log"'; \
+    echo '    SecRule ARGS:x "@streq deny204" "id:33003,phase:1,deny,status:204,log"'; \
+    echo '    SecRule ARGS:x "@streq deny444" "id:33004,phase:1,deny,status:444,log"'; \
+    echo '</Location>'; \
+    echo '<Location "/drop-body">'; \
+    echo '    SecAuditEngine On'; \
+    echo '    SecAuditLogParts ABFHZ'; \
+    echo '    SecAuditLogType Serial'; \
+    echo '    SecAuditLog /var/log/coraza/audit/drop-body.log'; \
+    echo '    SecRule REQUEST_BODY "@contains DROPME" "id:33010,phase:2,drop,log"'; \
+    echo '</Location>'; \
+    echo '<Location "/drop-resp">'; \
+    echo '    SecAuditEngine On'; \
+    echo '    SecAuditLogParts ABFHZ'; \
+    echo '    SecAuditLogType Serial'; \
+    echo '    SecAuditLog /var/log/coraza/audit/drop-resp.log'; \
+    echo '    SecResponseBodyAccess On'; \
+    echo '    SecResponseBodyMimeType text/plain'; \
+    echo '    SecRule ARGS:x "@streq drop3" "id:33020,phase:3,drop,log"'; \
+    echo '    SecRule ARGS:x "@streq deny200p3" "id:33021,phase:3,deny,status:200,log"'; \
+    echo '    SecRule ARGS:x "@streq drop4" "id:33022,phase:4,drop,log"'; \
+    echo '</Location>'; \
+    echo '<Location "/drop-detect">'; \
+    echo '    SecRuleEngine DetectionOnly'; \
+    echo '    SecAuditEngine On'; \
+    echo '    SecAuditLogParts ABFHZ'; \
+    echo '    SecAuditLogType Serial'; \
+    echo '    SecAuditLog /var/log/coraza/audit/drop-detect.log'; \
+    echo '    SecRule ARGS:x "@streq drop" "id:33030,phase:1,drop,log"'; \
     echo '</Location>'; \
     echo '<Location "/bulk-delayed">'; \
     echo '    SecResponseBodyMimeType application/octet-stream'; \

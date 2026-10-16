@@ -227,8 +227,40 @@ coraza_pack_headers(apr_pool_t *p, const coraza_header_pair_t *pairs,
 /* ------------------------------------------------------------------ */
 
 /*
- * Check if the WAF engine has queued an intervention (block/deny/redirect).
- * Returns OK if no action needed, or an HTTP status code (e.g. 403) to abort.
+ * Enforce a drop: the client gets nothing, not even a status line, and the
+ * connection is closed. Setting c->aborted makes the core output filter
+ * discard every brigade that reaches it (so whatever the handler, ap_die()
+ * or ap_finalize_request_protocol() still produce never hits the wire) and
+ * makes the MPM close the socket without the lingering-close read;
+ * AP_CONN_CLOSE additionally keeps ap_discard_request_body() from draining
+ * an unread body. Under mod_http2 the request's connection is the stream's
+ * pseudo-connection, so this resets the stream and the HTTP/2 connection
+ * survives. The status is set to 444 for the access log (%s), mirroring
+ * nginx's convention; it is never serialised.
+ */
+void
+coraza_drop_connection(request_rec *r)
+{
+    r->status = 444;
+    r->connection->keepalive = AP_CONN_CLOSE;
+    r->connection->aborted = 1;
+}
+
+/*
+ * Check if the WAF engine has queued an intervention (deny/drop/redirect).
+ * Returns OK if no action needed, otherwise the status to enforce.
+ *
+ * An intervention is always enforced. The engine reports a bare `drop` with
+ * status 0 (coraza's drop action only sets r.Status(), which is 0 when the
+ * rule gives none; only deny defaults to 403), and `deny,status:200` with
+ * 200: deciding on the status alone, as this function once did, served both
+ * of those (issue #76). The decision is therefore:
+ *   - `drop`, or any status 444: close the connection without a response
+ *     (ctx->drop_connection, status 444 in the audit log);
+ *   - a status below 300 other than 201/204 (0, 200, 1xx ...): served as
+ *     403 -- a "refusal" that looks like success is not a block, and a 200
+ *     with an empty body would be cacheable;
+ *   - everything else (redirects, 4xx, 5xx) is the rule's own status.
  * When early_log is set, triggers audit logging immediately so the denied
  * request is logged even though the log_transaction hook hasn't run yet.
  */
@@ -238,6 +270,8 @@ coraza_process_intervention(coraza_transaction_t transaction,
 {
     coraza_intervention_t *intervention;
     coraza_request_ctx_t *ctx;
+    int status;
+    int drop;
 
     ctx = ap_get_module_config(r->request_config, &coraza_module);
     if (ctx == NULL) {
@@ -249,57 +283,69 @@ coraza_process_intervention(coraza_transaction_t transaction,
         return OK;
     }
 
-    if (intervention->status != 200) {
-        coraza_update_status_code(ctx->transaction, intervention->status);
+    status = intervention->status;
+    drop = (intervention->action != NULL
+            && strcmp(intervention->action, "drop") == 0)
+           || status == 444;
 
+    if (drop) {
+        status = 444;
+        ctx->drop_connection = 1;
+    } else if (status < 300 && status != HTTP_CREATED
+               && status != HTTP_NO_CONTENT) {
+        status = HTTP_FORBIDDEN;
+    }
+
+    coraza_update_status_code(ctx->transaction, status);
+
+    if (drop) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
-                      "Coraza: Access denied with code %d",
-                      intervention->status);
+                      "Coraza: Access denied, connection dropped (rule %d)",
+                      intervention->rule_id);
+    } else {
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                      "Coraza: Access denied with code %d", status);
+    }
 
-        if (early_log) {
-            coraza_log_transaction(r);
-            ctx->logged = 1;
+    if (early_log) {
+        coraza_log_transaction(r);
+        ctx->logged = 1;
+    }
+
+    if (!drop && intervention->data != NULL) {
+        /*
+         * Defense-in-depth against HTTP response splitting / header
+         * injection. If a rule ever builds the redirect target from
+         * client-controlled data (macro expansion of a request variable),
+         * intervention->data could carry CR/LF or other control bytes.
+         * Truncate the Location at the first C0 control character or DEL
+         * (a legitimate URL carries none unencoded). libcoraza 1.4 does
+         * not macro-expand redirect targets today, so this future-proofs
+         * against a dynamic source at negligible cost.
+         */
+        const char *loc = intervention->data;
+        apr_size_t  len = strlen(loc);
+        apr_size_t  safe = 0;
+
+        while (safe < len &&
+               (unsigned char)loc[safe] >= 0x20 &&
+               (unsigned char)loc[safe] != 0x7f) {
+            safe++;
         }
 
-        if (intervention->data != NULL) {
-            /*
-             * Defense-in-depth against HTTP response splitting / header
-             * injection. If a rule ever builds the redirect target from
-             * client-controlled data (macro expansion of a request variable),
-             * intervention->data could carry CR/LF or other control bytes.
-             * Truncate the Location at the first C0 control character or DEL
-             * (a legitimate URL carries none unencoded). libcoraza 1.4 does
-             * not macro-expand redirect targets today, so this future-proofs
-             * against a dynamic source at negligible cost.
-             */
-            const char *loc = intervention->data;
-            apr_size_t  len = strlen(loc);
-            apr_size_t  safe = 0;
-
-            while (safe < len &&
-                   (unsigned char)loc[safe] >= 0x20 &&
-                   (unsigned char)loc[safe] != 0x7f) {
-                safe++;
-            }
-
-            if (safe != len) {
-                ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r,
-                              "coraza: control character in redirect target; "
-                              "truncating Location to %" APR_SIZE_T_FMT
-                              " byte(s)", safe);
-                loc = apr_pstrmemdup(r->pool, loc, safe);
-            }
-
-            apr_table_set(r->headers_out, "Location", loc);
+        if (safe != len) {
+            ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r,
+                          "coraza: control character in redirect target; "
+                          "truncating Location to %" APR_SIZE_T_FMT
+                          " byte(s)", safe);
+            loc = apr_pstrmemdup(r->pool, loc, safe);
         }
 
-        int status = intervention->status;
-        coraza_free_intervention(intervention);
-        return status;
+        apr_table_set(r->headers_out, "Location", loc);
     }
 
     coraza_free_intervention(intervention);
-    return OK;
+    return status;
 }
 
 

@@ -143,6 +143,7 @@ typedef struct {
     int logged;                    /* audit log already emitted (prevents double-log) */
     int intervention_triggered;    /* WAF denied the request */
     int response_body_processable; /* body inspection needed for this tx */
+    int drop_connection;           /* intervention was a drop: close, send nothing */
 } coraza_request_ctx_t;
 
 
@@ -169,10 +170,21 @@ typedef struct {
 char *coraza_pack_headers(apr_pool_t *p, const coraza_header_pair_t *pairs,
                           int count, int *packed_len);
 
-/* Check WAF intervention; return HTTP status (e.g. 403) or OK if none.
- * If early_log is set, triggers audit logging before returning. */
+/* Check WAF intervention; return OK if none, else the status to enforce:
+ * the rule's own status for deny/redirect (a deny below 300, other than
+ * 201/204, is served as 403 -- see coraza_process_intervention()), or 444
+ * with ctx->drop_connection set for `drop` and `deny,status:444`, which close
+ * the connection without a response. If early_log is set, triggers audit
+ * logging before returning. */
 int coraza_process_intervention(coraza_transaction_t transaction,
                                 request_rec *r, int early_log);
+
+/* Enforce a drop decided by coraza_process_intervention(): mark the connection
+ * aborted so nothing more is written to the client and httpd closes it
+ * without lingering, and record 444 as the request status for the access log.
+ * Phase 1-2 callers return DONE afterwards (no handler, no error page);
+ * the output filter discards its brigades and returns APR_ECONNABORTED. */
+void coraza_drop_connection(request_rec *r);
 
 /* Create per-request context with a WAF transaction.
  * Lazily builds a WAF for the dir_conf if needed (3-tier cache). */

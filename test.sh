@@ -528,6 +528,42 @@ check_raw_bodyless() {
     fi
 }
 
+# Assert a dropped connection: the server sends nothing at all -- not even a
+# status line -- and closes (EOF or reset) within the 5 s cap. nc cannot tell
+# "closed with no bytes" from "hung", so this goes through bash's /dev/tcp and
+# timeout(1), whose exit status 124 is the hang. The payload is sent as one
+# write before anything is read, so a pipelined pair tests that the second
+# request is never answered either.
+check_raw_dropped() {
+    desc="$1"
+    payload="$2"
+    hostport=${URL#http://}
+    hostport=${hostport%%/*}
+    host=${hostport%%:*}
+    port=${hostport##*:}
+    [ "$host" = "$port" ] && port=80
+
+    out=$(bash -c 'exec 3<>"/dev/tcp/$1/$2" || exit 99
+                   printf "%b" "$3" >&3
+                   timeout 5 cat <&3
+                   echo "rc=$?"' _ "$host" "$port" "$payload" 2>/dev/null)
+    rc=${out##*rc=}
+    bytes=${out%rc=*}
+    if [ "$rc" = "124" ]; then
+        printf "  FAIL  %s (connection still open after 5 s)\n" "$desc"
+        FAIL=$((FAIL + 1))
+    elif [ "$rc" = "99" ]; then
+        printf "  FAIL  %s (could not connect)\n" "$desc"
+        FAIL=$((FAIL + 1))
+    elif [ -n "$bytes" ]; then
+        printf "  FAIL  %s (got bytes: %s)\n" "$desc" "$(printf '%s' "$bytes" | head -1 | cut -c1-60)"
+        FAIL=$((FAIL + 1))
+    else
+        printf "  PASS  %s -> nothing sent, connection closed\n" "$desc"
+        PASS=$((PASS + 1))
+    fi
+}
+
 # Assert the sequence of status codes a raw exchange yields.
 check_raw_exchange() {
     desc="$1"
@@ -1089,6 +1125,17 @@ if [ "$h2ver" = "2" ]; then
     check_h2c "h2c: phase-4 pass delivers the body"                          "/phase4-pass"                   200 "OK"
     check_h2c "h2c: redirect intervention keeps its status"                  "/redirect-302?target=redirect"  302
     check_h2c "h2c: body-less 204 through the delay"                         "/status204"                     204
+    # A drop over HTTP/2 resets the stream, not the connection (issue #76):
+    # two requests in one curl run share the connection; the first (dropped)
+    # ends with no status, the second is served on the same connection.
+    h2pair=$(curl -s --http2-prior-knowledge --max-time 10 -o /dev/null -o /dev/null -w '%{http_code} ' "$URL/drop?x=drop" "$URL/drop?x=ok" 2>/dev/null)
+    if [ "$h2pair" = "000 200 " ]; then
+        printf "  PASS  h2c: drop resets the stream, the connection serves the next request\n"
+        PASS=$((PASS + 1))
+    else
+        printf "  FAIL  h2c: drop resets the stream, the connection serves the next request (got '%s', expected '000 200 ')\n" "$h2pair"
+        FAIL=$((FAIL + 1))
+    fi
     check_no_crash "Phase 3/4 over HTTP/2 (issue #51)"
 else
     echo "  SKIP  server does not negotiate HTTP/2 (got HTTP/${h2ver:-?}); the prefork image does not load mod_http2"
@@ -1130,6 +1177,29 @@ check_raw_bodyless "204: nothing after the headers on the wire" "/status204" 204
 check_curl "304: status passes through the delay, no hang" "$URL/status304" 304 --max-time 5
 check_raw_bodyless "304: nothing after the headers on the wire" "/status304" 304
 check_no_crash "Body-less responses through the header delay (issue #52)"
+echo ""
+
+echo "--- Drop and sub-300 deny interventions (issue #76) ---"
+# A bare `drop` reaches the connector with status 0 and `deny,status:200`
+# with 200; both used to be served because the decision was made on the
+# status alone. Now drop and 444 close the connection with nothing sent, a
+# deny below 300 (other than 201/204) is served as 403, and 201/204 keep
+# their body-less status. The raw helper proves "nothing sent": curl would
+# report an empty reply for a reset and a timeout for a hang alike.
+check "Drop: benign request on the location passes"          "$URL/drop?x=ok"      200
+check_raw_dropped "Drop: phase-1 bare drop sends nothing and closes" "GET /drop?x=drop HTTP/1.1\r\nHost: localhost\r\n\r\n"
+check_raw_dropped "Drop: phase-1 deny,status:444 sends nothing and closes" "GET /drop?x=deny444 HTTP/1.1\r\nHost: localhost\r\n\r\n"
+check_raw_dropped "Drop: a request pipelined after a drop is never answered" "GET /drop?x=drop HTTP/1.1\r\nHost: localhost\r\n\r\nGET /drop?x=ok HTTP/1.1\r\nHost: localhost\r\n\r\n"
+check "Drop: a new connection after a drop is served"        "$URL/drop?x=ok"      200
+check "deny,status:200: served as 403"                       "$URL/drop?x=deny200" 403
+check_raw_bodyless "deny,status:204: kept, nothing after the headers" "/drop?x=deny204" 204
+check_raw_dropped "Drop: phase-2 body drop sends nothing and closes" "POST /drop-body HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 10\r\n\r\nq=DROPME00"
+check_post "Drop: phase-2 benign body passes"                "$URL/drop-body" "q=fine" 200
+check_raw_dropped "Drop: phase-3 drop sends nothing and closes" "GET /drop-resp?x=drop3 HTTP/1.1\r\nHost: localhost\r\n\r\n"
+check "deny,status:200 in phase 3: served as 403"            "$URL/drop-resp?x=deny200p3" 403
+check_raw_dropped "Drop: phase-4 drop on a delayed body sends nothing and closes" "GET /drop-resp?x=drop4 HTTP/1.1\r\nHost: localhost\r\n\r\n"
+check "Drop: benign response on the location passes"         "$URL/drop-resp?x=ok" 200
+check_no_crash "Drop and sub-300 deny interventions (issue #76)"
 echo ""
 
 echo "--- Delayed response cap (bound worker memory) ---"
@@ -1547,6 +1617,39 @@ SecRemoteRulesFailAction Abort' 0 'Syntax OK'
     check_perloc_audit_log        "DetectionOnly: match logged with its msg"      "/var/log/coraza/audit/detection.log"         'detection-only-match'
     check "DetectionOnly: the On twin blocks"                 "$URL/detection-only-on?action=block403"      403
     check_no_crash "DetectionOnly via the audit log (issue #49)"
+    echo ""
+
+    echo "--- Drop interventions proven via the audit log (issue #76) ---"
+    # The wire says nothing on a drop by design, so the logs are the witness:
+    # the connector's own decision line in the container log ("connection
+    # dropped (rule N)" / "Access denied with code 403"), the rule id in the
+    # per-location audit log, and for a phase-4 drop the status line the
+    # engine recorded (part F: "HTTP/1.1 444"). The DetectionOnly twin is
+    # served, logs the match, and must not log a drop.
+    clear_perloc_audit_logs
+    check_raw_dropped "Drop audit: phase-1 drop" "GET /drop?x=drop HTTP/1.1\r\nHost: localhost\r\n\r\n"
+    check_container_log    "Drop audit: phase-1 drop decision logged"  "connection dropped (rule 33001)"
+    check_perloc_audit_log "Drop audit: phase-1 drop rule id audited"  "/var/log/coraza/audit/drop.log" '33001'
+    clear_perloc_audit_logs
+    check "Drop audit: deny,status:200 served as 403"               "$URL/drop?x=deny200" 403
+    check_container_log    "Drop audit: remapped deny logged as 403"  "Access denied with code 403"
+    check_perloc_audit_log "Drop audit: remapped deny rule id audited" "/var/log/coraza/audit/drop.log" '33002'
+    clear_perloc_audit_logs
+    check_raw_dropped "Drop audit: phase-4 drop" "GET /drop-resp?x=drop4 HTTP/1.1\r\nHost: localhost\r\n\r\n"
+    check_container_log    "Drop audit: phase-4 drop decision logged"  "connection dropped (rule 33022)"
+    check_perloc_audit_log "Drop audit: phase-4 drop rule id audited"  "/var/log/coraza/audit/drop-resp.log" '33022'
+    check_perloc_audit_log "Drop audit: phase-4 drop recorded as 444"  "/var/log/coraza/audit/drop-resp.log" 'HTTP/1.1 444'
+    clear_perloc_audit_logs
+    check "Drop audit: DetectionOnly twin is served"                "$URL/drop-detect?x=drop" 200
+    check_perloc_audit_log "Drop audit: DetectionOnly match audited" "/var/log/coraza/audit/drop-detect.log" '33030'
+    if docker logs "$CONTAINER" 2>&1 | grep -q "connection dropped (rule 33030)"; then
+        printf "  FAIL  Drop audit: DetectionOnly twin must not drop\n"
+        FAIL=$((FAIL + 1))
+    else
+        printf "  PASS  Drop audit: DetectionOnly twin did not drop\n"
+        PASS=$((PASS + 1))
+    fi
+    check_no_crash "Drop interventions proven via the audit log (issue #76)"
     echo ""
 
     echo "--- Crash sweep self-test ---"
