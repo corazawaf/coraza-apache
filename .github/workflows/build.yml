@@ -88,6 +88,20 @@ jobs:
             coraza-apache-${{ matrix.mpm }}:/usr/local/apache2/modules/mod_coraza.so \
             mod_coraza.so
 
+      - name: Save the container log
+        # The container runs with --rm: once stopped its log is gone, and a
+        # failed suite leaves nothing to read. Keep it as an artifact.
+        if: failure()
+        run: docker logs coraza-apache-${{ matrix.mpm }} > httpd-container.log 2>&1 || true
+
+      - name: Upload the container log
+        if: failure()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: httpd-log-${{ matrix.mpm }}-${{ matrix.libcoraza }}
+          path: httpd-container.log
+          if-no-files-found: ignore
+
       - name: Stop container
         if: always()
         run: docker stop coraza-apache-${{ matrix.mpm }} || true
